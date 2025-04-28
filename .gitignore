@@ -135,3 +135,9 @@ dmypy.json
 *.tar
 *.pth
 *.gz
+
+# Pytorch models
+*.pt
+
+# python venv
+falcon-vision-od-venv
