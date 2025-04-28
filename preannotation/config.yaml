@@ -1,0 +1,57 @@
+model_type: tf_efficientdet_d4_ap
+
+base_data_path: /media/lopezemi/Expansion/falcon-vision-ml/artifacts/data_pipeline
+
+garages:
+  - arlington
+
+threshold: 0.3
+
+allowed_labels: # see config/label_map.yaml
+  - 1   # person
+  - 3   # car
+  - 4   # motorcycle
+  - 6   # bus
+  - 8   # truck
+
+efficientdet_models:
+
+  tf_efficientdet_d0:
+    input_size: [512, 512]
+    url: https://github.com/rwightman/efficientdet-pytorch/releases/download/v0.1/tf_efficientdet_d0_34-f153e0cf.pth
+
+  tf_efficientdet_d0_ap:
+    input_size: [512, 512]
+    url: https://github.com/rwightman/efficientdet-pytorch/releases/download/v0.1/tf_efficientdet_d0_ap-d0cdbd0a.pth
+
+  tf_efficientdet_d1:
+    input_size: [640, 640]
+    url: https://github.com/rwightman/efficientdet-pytorch/releases/download/v0.1/tf_efficientdet_d1_40-a30f94af.pth
+
+  tf_efficientdet_d1_ap:
+    input_size: [640, 640]
+    url: https://github.com/rwightman/efficientdet-pytorch/releases/download/v0.1/tf_efficientdet_d1_ap-7721d075.pth
+
+  tf_efficientdet_d2:
+    input_size: [768, 768]
+    url: https://github.com/rwightman/efficientdet-pytorch/releases/download/v0.1/tf_efficientdet_d2_43-8107aa99.pth
+
+  tf_efficientdet_d2_ap:
+    input_size: [768, 768]
+    url: https://github.com/rwightman/efficientdet-pytorch/releases/download/v0.1/tf_efficientdet_d2_ap-a2995c19.pth
+
+  tf_efficientdet_d3:
+    input_size: [896, 896]
+    url: https://github.com/rwightman/efficientdet-pytorch/releases/download/v0.1/tf_efficientdet_d3_47-0b525f35.pth
+
+  tf_efficientdet_d3_ap:
+    input_size: [896, 896]
+    url: https://github.com/rwightman/efficientdet-pytorch/releases/download/v0.1/tf_efficientdet_d3_ap-e4a2feab.pth
+
+  tf_efficientdet_d4:
+    input_size: [1024, 1024]
+    url: https://github.com/rwightman/efficientdet-pytorch/releases/download/v0.1/tf_efficientdet_d4_49-f56376d9.pth
+
+  tf_efficientdet_d4_ap:
+    input_size: [1024, 1024]
+    url: https://github.com/rwightman/efficientdet-pytorch/releases/download/v0.1/tf_efficientdet_d4_ap-f601a5fc.pth

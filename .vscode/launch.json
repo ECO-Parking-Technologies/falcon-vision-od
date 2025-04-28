@@ -1,0 +1,20 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+      {
+        "name": "Run Preannotation",
+        "type": "python",
+        "request": "launch",
+        "program": "${workspaceFolder}/preannotation/run_preannotation.py",
+        "console": "integratedTerminal",
+        "args": [
+          "--config", "preannotation/config.yaml",
+          "--visualize", "3"
+        ],
+        "env": {
+          "PYTHONPATH": "${workspaceFolder}"
+        }
+      }
+    ]
+  }
+  
