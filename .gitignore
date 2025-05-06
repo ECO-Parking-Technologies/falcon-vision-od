@@ -141,3 +141,6 @@ dmypy.json
 
 # python venv
 falcon-vision-od-venv
+
+# output directory
+experiments/
