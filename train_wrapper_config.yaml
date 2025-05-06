@@ -1,0 +1,15 @@
+base_data_path: /media/lopezemi/Expansion/falcon-vision-ml/artifacts/data_pipeline
+
+annotated_files:
+  - wpb_banyan/training_images/fve559ac/annotations.coco.json
+  - arlington/training_images/fv1b999e/annotations.coco.json
+
+train_val_split: 0.8
+
+output_dir: experiments/falcon-vision-effdet
+model: tf_efficientdet_d2
+num_classes: 20
+batch_size: 8
+epochs: 50
+amp: true
+extra_args: "--workers 4"

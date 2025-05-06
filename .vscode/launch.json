@@ -15,6 +15,19 @@
           "PYTHONPATH": "${workspaceFolder}"
         }
       }
+      {
+        "name": "Run Training",
+        "type": "python",
+        "request": "launch",
+        "program": "${workspaceFolder}/run_training_from_config.py",
+        "console": "integratedTerminal",
+        "args": [
+          "--config", "train_wrapper_config.yaml"
+        ],
+        "env": {
+          "PYTHONPATH": "${workspaceFolder}"
+        }
+      }
     ]
   }
   

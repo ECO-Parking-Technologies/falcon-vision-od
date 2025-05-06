@@ -149,7 +149,7 @@ def main():
                     pbar.update(1)
                     continue
 
-                output_json = os.path.join(sensor_dir, "annotations.coco.json")
+                output_json = os.path.join(sensor_dir, "preannotations.coco.json")
                 detections = run_inference_on_sensor(
                     model,
                     sensor_dir,
