@@ -9,7 +9,8 @@
         "console": "integratedTerminal",
         "args": [
           "--config", "preannotation/config.yaml",
-          "--visualize", "3"
+          "--visualize", "3",
+          "--dry-run"
         ],
         "env": {
           "PYTHONPATH": "${workspaceFolder}"

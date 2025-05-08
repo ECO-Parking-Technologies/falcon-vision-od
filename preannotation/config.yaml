@@ -1,3 +1,4 @@
+use_pretrained_model: False
 model_type: tf_efficientdet_lite0
 model_file: experiments/falcon-vision-effdet/tf_efficientdet_lite0.pt
 
