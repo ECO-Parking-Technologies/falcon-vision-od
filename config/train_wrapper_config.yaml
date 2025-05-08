@@ -7,8 +7,7 @@ annotated_files:
 train_val_split: 0.8
 
 output_dir: experiments/falcon-vision-effdet
-model: tf_efficientdet_d2
-num_classes: 20
+model: tf_efficientdet_lite0
 batch_size: 8
 epochs: 50
 amp: true

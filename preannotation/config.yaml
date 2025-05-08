@@ -1,9 +1,10 @@
-model_type: tf_efficientdet_d4_ap
+model_type: tf_efficientdet_lite0
+model_file: experiments/falcon-vision-effdet/tf_efficientdet_lite0.pt
 
 base_data_path: /media/lopezemi/Expansion/falcon-vision-ml/artifacts/data_pipeline
 
 garages:
-  - arlington
+  - amazon
 
 threshold: 0.3
 
@@ -15,6 +16,9 @@ allowed_labels: # see config/label_map.yaml
   - 8   # truck
 
 efficientdet_models:
+
+  tf_efficientdet_lite0:
+    input_size: [320, 320]
 
   tf_efficientdet_d0:
     input_size: [512, 512]
