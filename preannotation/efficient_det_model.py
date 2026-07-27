@@ -53,7 +53,8 @@ class EfficientDetModel:
                 pretrained_backbone=pretrained_backbone,
                 pretrained=False,
             )
-            sd = torch.load(self.model_path, map_location="cpu")
+            # weights_only=False: training checkpoints embed argparse.Namespace (trusted, local)
+            sd = torch.load(self.model_path, map_location="cpu", weights_only=False)
             sd = sd.get("state_dict", sd)
             # training checkpoints are bench-level ("model."-prefixed); release
             # checkpoints are raw-network keys — normalize to raw and load there
