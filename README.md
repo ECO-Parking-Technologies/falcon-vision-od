@@ -1,119 +1,96 @@
 # Falcon Vision Object Detection (EfficientDet)
 
-This repository is a fork of [`rwightman/efficientdet-pytorch`](https://github.com/rwightman/efficientdet-pytorch), adapted for use in the **Falcon Vision** parking guidance system.  
-We are transitioning from image classification to full **object detection** using **EfficientDet** for better accuracy, scalability, and real-time performance on embedded devices.
+This repository is a fork of [`rwightman/efficientdet-pytorch`](https://github.com/rwightman/efficientdet-pytorch), adapted for the **Falcon Vision** parking guidance system. It trains and fine-tunes custom EfficientDet models on Falcon Vision camera data to replace the off-the-shelf detection model currently running in the sensor firmware with one that is **faster and more accurate** — particularly at detecting vehicles in monitored parking spots.
 
 ---
 
-## Purpose
+## Goals & Deployment Targets
 
-- Detect vehicles and pedestrians in real-time on embedded hardware.
-- Determine parking space occupancy by matching detections to parking zone regions.
-- Train and fine-tune custom EfficientDet models on Falcon Vision camera data.
-- Automate annotation with pre-annotation models to save time.
+The sensor firmware already runs an off-the-shelf **EfficientDet-Lite2** (448×448, full-int8 TFLite). This repo exists to beat it. The deployment format is **full-int8 quantized TFLite (LiteRT)**, which serves all three sensor hardware tiers:
 
----
+| Tier | Hardware | Inference path |
+|------|----------|----------------|
+| Low  | Raspberry Pi CM3+ (quad Cortex-A53) | TFLite int8 on CPU (XNNPACK) |
+| Mid  | [DART-MX8M-PLUS](https://variscite.com/system-on-module-som/i-mx-8/i-mx-8m-plus/dart-mx8m-plus/) (i.MX8M Plus) | TFLite int8 on 2.3 TOPS NPU (VX delegate / eIQ) |
+| High | [DART-MX95](https://variscite.com/system-on-module-som/i-mx-9/i-mx-95/dart-mx95/) (i.MX95) | TFLite int8 on eIQ Neutron NPU |
 
-## Features
+Different model scales (input resolution / variant) can be targeted per tier from the same training pipeline.
 
-- Pre-annotation pipeline using EfficientDet variants (Lite0–Lite4, D0–D7).
-- Fully configurable detection classes and thresholds.
-- Automatic model downloading (from HuggingFace/Google Checkpoints).
-- MS COCO 1.0 dataset export compatible with CVAT, FiftyOne, ClearML, etc.
-- GPU acceleration supported for fast inference (requires NVIDIA drivers + PyTorch CUDA install).
-- Modular config (`config.yaml`) to easily switch models and parameters.
-- Optimized for future edge deployment (TFLite/ONNX export planned).
+See [docs/road-map/](docs/road-map/) for the full research roadmap (model selection, compute budget, data preparation, training, evaluation, deployment), [docs/planning/](docs/planning/) for the current working plan of remaining tasks, and [docs/portal-api/](docs/portal-api/) for the ECO Parking portal GraphQL API reference.
 
----
+## Pipeline Overview
 
-## Installation Instructions
-
-### 1. Clone the Repository
-
-```bash
-git clone https://github.com/your-org/falcon-vision-od.git
-cd falcon-vision-od
+```
+Portal images → Preannotation → CVAT (annotate/correct) → COCO export
+      → Training (garage data + filtered MS-COCO) → Checkpoint
+      → Export (int8 TFLite) → Sensor firmware
 ```
 
-### 2. Set Up Python Virtual Environment
-
-Use the provided setup script:
-
-```bash
-bash setup_venv.sh
-```
-
-This will:
-- Create a new virtual environment `falcon-vision-od-venv`
-- Install all required dependencies from `requirements.txt`
-
-✅ After running the script, **activate the virtual environment** every time you start a new terminal session:
-
-```bash
-source falcon-vision-od-venv/bin/activate
-```
-
-> **Important:** Always activate the venv before running Python commands!
+- **Classes** ([config/label_map.yaml](config/label_map.yaml)): person, bicycle, car, motorcycle, bus, truck (COCO ids, remapped to contiguous ids for training).
+- **Data root**: `/media/lopezemi/Expansion/falcon-vision-ml/artifacts/data_pipeline`, laid out as `<garage>/training_images/<sensor>/<sensor>-<camera>-<date>-<time>-<nn>.png`.
 
 ---
 
-## Preannotation Pipeline
+## Installation
 
-You can pre-annotate your dataset automatically using pretrained EfficientDet models.
+```bash
+bash setup_venv.sh                        # creates falcon-vision-od-venv from requirements.txt
+source falcon-vision-od-venv/bin/activate # activate before running anything
+```
 
-**Command to run:**
+Note: `setup_venv.sh` deletes and recreates the venv each run.
+
+---
+
+## Preannotation
+
+Runs a model over garage images and writes COCO 1.0 annotation files per sensor for CVAT import:
 
 ```bash
 python3 preannotation/run_preannotation.py --config preannotation/config.yaml --visualize 3
 ```
 
-**What this does:**
-- Downloads and loads the correct EfficientDet model automatically.
-- Runs inference over all images under your configured data path.
-- Filters detections based on allowed labels and thresholds.
-- Outputs COCO 1.0 formatted annotation files per sensor.
-- Generates a `labels.json` to assist with CVAT label setup.
+- Configured by [preannotation/config.yaml](preannotation/config.yaml): model, garages, confidence `threshold`, `allowed_labels`.
+- Uses either downloaded COCO-pretrained weights (`use_pretrained_model: True`) or a trained TorchScript model from this repo (`model_file`).
+- Outputs `preannotations.coco.json` per sensor plus `cvat_labels.json` for CVAT label setup.
 
----
+## Annotation (CVAT)
 
-## Configuration (`config.yaml`)
+CVAT is the source of truth for annotations, including train/val/test splits. See [cvat/README.md](cvat/README.md) for self-hosted setup (v2.23.1), task structure (one task per garage+sensor), importing preannotations, and exporting COCO for training.
 
-Key fields:
+## Training
 
-- `model_type`: EfficientDet model variant (e.g., `tf_efficientdet_d3_ap`).
-- `efficientdet_models`: Lookup table for input size and download URL.
-- `allowed_labels`: Only export these labels (e.g., `car`, `person`).
-- `threshold`: Confidence threshold for filtering weak detections.
-- `garages`: List of garages to pre-annotate.
+```bash
+python3 run_training_from_config.py --config config/train_wrapper_config.yaml
+```
 
----
+Configured by [config/train_wrapper_config.yaml](config/train_wrapper_config.yaml). This:
 
-## Annotation Setup (CVAT)
+1. Merges CVAT-exported garage annotations, splits train/val, and symlinks images into a timestamped `split_*` dir under `output_dir`.
+2. Downloads MS-COCO 2017 (~20 GB, once), filters it to our classes, and merges it into the split.
+3. Invokes the upstream `train.py` in-process with the configured model, batch size, epochs, etc.
 
-We use **CVAT** to manage image annotations for Falcon Vision.
+Outputs land in `experiments/falcon-vision-effdet/train/<timestamp>-<model>/` (checkpoints, `summary.csv` with per-epoch loss/mAP).
 
-- See [cvat/README.md](cvat/README.md) for complete instructions on:
-  - Setting up CVAT
-  - Project and task creation (one task per sensor)
-  - Running pre-annotation using EfficientDet
-  - Importing pre-annotations into tasks
-  - Finalizing and exporting annotations for training
+## Export
 
+```bash
+python3 generate_model_files.py            # newest best checkpoint → TorchScript .pt
+```
+
+Produces the float TorchScript model used by the preannotation pipeline. The deployable **int8 TFLite export (via ai-edge-torch, with representative-dataset calibration)** is the next piece of the toolchain to be built. Off-the-shelf COCO checkpoints downloaded for evaluation live in `weights/` (gitignored).
 
 ---
 
 ## Based On
 
+- [EfficientDet PyTorch (rwightman)](https://github.com/rwightman/efficientdet-pytorch)
 - [Official EfficientDet (TensorFlow)](https://github.com/google/automl)
 - [EfficientDet Paper: Scalable and Efficient Object Detection](https://arxiv.org/abs/1911.09070)
-- [EfficientDet PyTorch (rwightman)](https://github.com/rwightman/efficientdet-pytorch)
 
----
+## Planned
 
-## Coming Soon (Planned)
-
-- Fine-tuning scripts with PyTorch Lightning.
-- Dataset management using FiftyOne.
-- Automatic export to ONNX and TFLite for embedded deployment.
-
----
+- int8 TFLite export path (ai-edge-torch) matching the firmware's model contract.
+- Eco Parking portal integration to pull training images from all garages.
+- Spot-occupancy evaluation (detections + spot definitions → per-spot accuracy vs. the current firmware model).
+- Anchor box tuning from garage box-size distributions.
