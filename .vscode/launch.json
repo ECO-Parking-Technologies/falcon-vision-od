@@ -15,7 +15,7 @@
         "env": {
           "PYTHONPATH": "${workspaceFolder}"
         }
-      }
+      },
       {
         "name": "Run Training",
         "type": "python",
@@ -23,12 +23,21 @@
         "program": "${workspaceFolder}/run_training_from_config.py",
         "console": "integratedTerminal",
         "args": [
-          "--config", "train_wrapper_config.yaml"
+          "--config", "config/train_wrapper_config.yaml"
         ],
+        "env": {
+          "PYTHONPATH": "${workspaceFolder}"
+        }
+      },
+      {
+        "name": "Generate Model Files",
+        "type": "python",
+        "request": "launch",
+        "program": "${workspaceFolder}/generate_model_files.py",
+        "console": "integratedTerminal",
         "env": {
           "PYTHONPATH": "${workspaceFolder}"
         }
       }
     ]
   }
-  

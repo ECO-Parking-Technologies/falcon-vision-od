@@ -1,22 +1,20 @@
-#!/bin/bash
+#!/usr/bin/env bash
+set -e
 
-# Name of the virtual environment
 VENV_NAME="falcon-vision-od-venv"
 
-# Create Python virtual environment
-echo "Creating virtual environment..."
-python3 -m venv $VENV_NAME
+echo "🗑  Cleaning up old virtual environment..."
+rm -rf $VENV_NAME
 
-# Activate the environment
+echo "🛠  Creating virtual environment..."
+python3 -m venv $VENV_NAME
 source $VENV_NAME/bin/activate
 
-# Upgrade pip
-echo "Upgrading pip..."
-pip install --upgrade pip
+echo "🆙  Upgrading pip & wheel..."
+python3 -m pip install --upgrade pip wheel
 
-# Install required packages
-echo "Installing dependencies..."
-pip install -r requirements.txt
+echo "📦  Installing requirements..."
+python3 -m pip install -r requirements.txt
 
-echo "Environment setup complete."
-echo "To activate manually later, run: source $VENV_NAME/bin/activate"
+echo "✅  Setup complete! Activate with:"
+echo "    source $VENV_NAME/bin/activate"

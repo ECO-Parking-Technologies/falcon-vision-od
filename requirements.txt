@@ -19,10 +19,3 @@ clearml>=1.10.0
 
 # Training wrapper
 pytorch-lightning>=2.0.0
-
-onnx>=1.17.0
-onnx2tf==1.22.3
-
-# TensorFlow + Keras
-tensorflow==2.16.1
-tf-keras==2.16.0

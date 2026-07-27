@@ -1,6 +1,7 @@
 use_pretrained_model: False
 model_type: tf_efficientdet_lite0
 model_file: experiments/falcon-vision-effdet/tf_efficientdet_lite0.pt
+pretrained_backbone: True
 
 base_data_path: /media/lopezemi/Expansion/falcon-vision-ml/artifacts/data_pipeline
 
@@ -15,6 +16,12 @@ allowed_labels: # see config/label_map.yaml
   - 4   # motorcycle
   - 6   # bus
   - 8   # truck
+
+# crop:
+#   x: 0
+#   y: 20
+#   width: 192
+#   height: 480
 
 efficientdet_models:
 
