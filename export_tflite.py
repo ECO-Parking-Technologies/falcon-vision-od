@@ -165,6 +165,8 @@ def main():
     ap.add_argument("--checkpoint", type=Path, default=None)
     ap.add_argument("--model", default=None,
                     help="effdet model name (default: `model` from train_wrapper_config.yaml)")
+    ap.add_argument("--num-classes", type=int, default=None,
+                    help="override class count (e.g. 90 for COCO-pretrained checkpoints)")
     ap.add_argument("--calib-dir", type=Path, default=None,
                     help="Root with <garage>/training_images/<sensor>/*.png "
                          "(default: base_data_path from preannotation/config.yaml)")
@@ -174,7 +176,7 @@ def main():
 
     cfg = yaml.safe_load(Path("config/train_wrapper_config.yaml").read_text())
     model_name = args.model or cfg["model"]
-    num_classes = cfg.get("num_classes", len(load_label_map()))
+    num_classes = args.num_classes or cfg.get("num_classes", len(load_label_map()))
     H, W = MODEL_CONFIG[model_name]["image_size"]
     out_dir = Path(cfg["output_dir"])
 
@@ -200,7 +202,7 @@ def main():
 
     # ---- float32 export ----
     edge_model = litert_torch.convert(export_model, sample)
-    f32_path = art_dir / "model.f32.tflite"
+    f32_path = art_dir / f"{art_dir.name}.f32.tflite"
     edge_model.export(str(f32_path))
     print(f"Wrote {f32_path}")
 
@@ -229,7 +231,7 @@ def main():
     # ---- dynamic-range quant (int8 weights, float32 activations) ----
     # Friendly to older TFLite runtimes (the current sensor lib predates
     # new-style full-int8); ~4x smaller than f32 with float compute I/O.
-    dyn_path = art_dir / "model.dynamic.tflite"
+    dyn_path = art_dir / f"{art_dir.name}.dynamic.tflite"
     qt_dyn = aeq_quantizer.Quantizer(f32_path, aeq_recipe.dynamic_wi8_afp32())
     qt_dyn.quantize(serialize_to_path=dyn_path)
     print(f"Wrote {dyn_path}")
@@ -271,7 +273,7 @@ def main():
 
     qt = aeq_quantizer.Quantizer(f32_path, aeq_recipe.static_wi8_ai8())
     calib_result = qt.calibrate({sig_key: calib_inputs})
-    q_path = art_dir / "model.int8.tflite"
+    q_path = art_dir / f"{art_dir.name}.int8.tflite"
     qt.quantize(calib_result, serialize_to_path=q_path)
     print(f"Wrote {q_path}")
 

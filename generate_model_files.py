@@ -79,7 +79,7 @@ def main():
     dummy = torch.randn(1, 3, H, W)
     traced = torch.jit.trace(base, dummy, strict=False)
     art_dir = artifact_dir(out_dir, model_name, ckpt)
-    ts_path = art_dir / "model.ts.pt"
+    ts_path = art_dir / f"{art_dir.name}.ts.pt"
     traced.save(ts_path)
     print("Saved TorchScript model to:", ts_path)
 

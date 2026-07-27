@@ -26,6 +26,8 @@ class EfficientDetModel:
         :param model_path: Path to a TorchScript trace (.pt) or a checkpoint/state_dict
         """
         self.model_path = Path(model_path)
+        if self.model_path.is_dir():  # artifact dir: pick the TorchScript file
+            self.model_path = sorted(self.model_path.glob('*.ts.pt'))[-1]
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
         # A .pt may be a TorchScript trace or a plain checkpoint/state_dict;
