@@ -12,6 +12,7 @@ from pathlib import Path
 import torch
 import yaml
 
+from artifact_paths import artifact_dir, update_latest_symlink, update_manifest
 from config.label_loader import load_label_map
 from effdet import create_model
 from effdet.config.model_config import efficientdet_model_param_dict as MODEL_CONFIG
@@ -38,13 +39,15 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--checkpoint", type=Path, default=None,
                     help="Checkpoint to export (default: newest model_best.pth.tar in output_dir)")
+    ap.add_argument("--model", default=None,
+                    help="effdet model name (default: `model` from train_wrapper_config.yaml)")
     args = ap.parse_args()
 
     cfg = load_cfg()
     out_dir = Path(cfg["output_dir"])
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    model_name = cfg["model"]
+    model_name = args.model or cfg["model"]
     num_classes = cfg.get("num_classes", len(load_label_map()))
     H, W = MODEL_CONFIG[model_name]["image_size"]
     print(f"Exporting {model_name} ({H}x{W}), classes={num_classes}")
@@ -75,9 +78,23 @@ def main():
 
     dummy = torch.randn(1, 3, H, W)
     traced = torch.jit.trace(base, dummy, strict=False)
-    ts_path = out_dir / f"{model_name}.pt"
+    art_dir = artifact_dir(out_dir, model_name, ckpt)
+    ts_path = art_dir / "model.ts.pt"
     traced.save(ts_path)
     print("Saved TorchScript model to:", ts_path)
+
+    update_manifest(art_dir, "torchscript", {
+        "model": model_name,
+        "checkpoint": str(ckpt),
+        "image_size": [H, W],
+        "num_classes": num_classes,
+        "file": ts_path.name,
+        "size_bytes": ts_path.stat().st_size,
+        "torch_version": torch.__version__,
+        "note": "DetBenchPredict trace (includes box decode + NMS); "
+                "outputs [B,100,6] xyxy,score,1-based class",
+    })
+    update_latest_symlink(art_dir)
 
 
 if __name__ == "__main__":

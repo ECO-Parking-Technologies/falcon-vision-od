@@ -81,7 +81,17 @@ bash setup_export_venv.sh                  # once: separate venv for the TFLite 
 PYTHONPATH=. falcon-vision-od-export-venv/bin/python export_tflite.py
 ```
 
-[export_tflite.py](export_tflite.py) exports the newest best checkpoint to float32 and **full-int8 TFLite** (litert-torch conversion + ai-edge-quantizer static PTQ calibrated on real garage images), with built-in PyTorch↔TFLite parity checks. Input is NHWC like the firmware baseline; outputs are pre-NMS boxes/scores (post-process contract tracked in [docs/planning/03-tflite-export.md](docs/planning/03-tflite-export.md)). Off-the-shelf COCO checkpoints downloaded for evaluation live in `weights/` (gitignored).
+[export_tflite.py](export_tflite.py) exports a checkpoint to float32 and **full-int8 TFLite** (litert-torch conversion + ai-edge-quantizer static PTQ calibrated on real garage images), with built-in PyTorch↔TFLite parity checks. Input is NHWC like the firmware baseline; outputs are pre-NMS boxes/scores (post-process contract tracked in [docs/planning/03-tflite-export.md](docs/planning/03-tflite-export.md)).
+
+Both exporters accept `--model` / `--checkpoint` and write versioned artifacts (see [artifact_paths.py](artifact_paths.py)):
+
+```
+<output_dir>/artifacts/<model>/<train-run>/
+    model.ts.pt  model.f32.tflite  model.int8.tflite  manifest.json
+<output_dir>/artifacts/<model>/latest -> <train-run>/   # stable path for configs
+```
+
+`manifest.json` records checkpoint provenance, input/output contract, quantization recipe, parity metrics, and git commit per artifact. Off-the-shelf COCO checkpoints downloaded for evaluation live in `weights/` (gitignored).
 
 ---
 

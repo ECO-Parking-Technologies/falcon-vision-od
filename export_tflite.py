@@ -31,6 +31,8 @@ from ai_edge_litert.interpreter import Interpreter
 from ai_edge_quantizer import quantizer as aeq_quantizer
 from ai_edge_quantizer import recipe as aeq_recipe
 
+from artifact_paths import artifact_dir, update_latest_symlink, update_manifest
+
 from effdet import create_model
 from effdet.config.model_config import efficientdet_model_param_dict as MODEL_CONFIG
 from config.label_loader import load_label_map
@@ -107,11 +109,19 @@ def parity(tag, ref_boxes, ref_scores, boxes, scores, topk=100):
     top = np.argsort(ref_scores.max(-1).ravel())[::-1][:topk]
     d_scores = np.abs(scores - ref_scores)
     d_boxes = np.abs(boxes - ref_boxes).reshape(-1, 4)[top]
-    print(f"{tag}: scores max|Δ|={d_scores.max():.4f} p99|Δ|={np.percentile(d_scores, 99):.4f}; "
-          f"top{topk} boxes max|Δ|={d_boxes.max():.4f}")
     top_o = np.argsort(scores.max(-1).ravel())[::-1][:20]
     top_r = np.argsort(ref_scores.max(-1).ravel())[::-1][:20]
-    print(f"{tag}: top-20 anchor overlap {len(set(top_o.tolist()) & set(top_r.tolist()))}/20")
+    metrics = {
+        "scores_max_abs_diff": round(float(d_scores.max()), 5),
+        "scores_p99_abs_diff": round(float(np.percentile(d_scores, 99)), 5),
+        f"top{topk}_boxes_max_abs_diff": round(float(d_boxes.max()), 5),
+        "top20_anchor_overlap": len(set(top_o.tolist()) & set(top_r.tolist())),
+    }
+    print(f"{tag}: scores max|Δ|={metrics['scores_max_abs_diff']} "
+          f"p99|Δ|={metrics['scores_p99_abs_diff']}; "
+          f"top{topk} boxes max|Δ|={metrics[f'top{topk}_boxes_max_abs_diff']}; "
+          f"top-20 anchor overlap {metrics['top20_anchor_overlap']}/20")
+    return metrics
 
 
 def find_ckpt(output_dir: Path) -> Path:
@@ -146,6 +156,8 @@ def load_network(model_name, num_classes, ckpt_path):
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--checkpoint", type=Path, default=None)
+    ap.add_argument("--model", default=None,
+                    help="effdet model name (default: `model` from train_wrapper_config.yaml)")
     ap.add_argument("--calib-dir", type=Path, default=None,
                     help="Root with <garage>/training_images/<sensor>/*.png "
                          "(default: base_data_path from preannotation/config.yaml)")
@@ -154,13 +166,15 @@ def main():
     args = ap.parse_args()
 
     cfg = yaml.safe_load(Path("config/train_wrapper_config.yaml").read_text())
-    model_name = cfg["model"]
+    model_name = args.model or cfg["model"]
     num_classes = cfg.get("num_classes", len(load_label_map()))
     H, W = MODEL_CONFIG[model_name]["image_size"]
     out_dir = Path(cfg["output_dir"])
 
     ckpt = args.checkpoint or find_ckpt(out_dir)
+    art_dir = artifact_dir(out_dir, model_name, ckpt)
     print(f"Exporting {model_name} ({H}x{W}, {num_classes} classes) from {ckpt}")
+    print(f"Artifacts -> {art_dir}")
 
     net = load_network(model_name, num_classes, ckpt)
     model = ExportWrapper(net, num_classes).eval()
@@ -179,15 +193,33 @@ def main():
 
     # ---- float32 export ----
     edge_model = litert_torch.convert(export_model, sample)
-    f32_path = out_dir / f"{model_name}.f32.tflite"
+    f32_path = art_dir / "model.f32.tflite"
     edge_model.export(str(f32_path))
     print(f"Wrote {f32_path}")
 
     # float parity vs PyTorch
     tfl_boxes, tfl_scores = run_tflite(f32_path, sample[0])
-    parity("float parity", ref_boxes.numpy(), ref_scores.numpy(), tfl_boxes, tfl_scores)
+    f32_parity = parity("float parity", ref_boxes.numpy(), ref_scores.numpy(),
+                        tfl_boxes, tfl_scores)
+
+    manifest_common = {
+        "model": model_name,
+        "checkpoint": str(ckpt),
+        "image_size": [H, W],
+        "num_classes": num_classes,
+        "input_layout": "NHWC",
+        "outputs": {"boxes": [1, n_anchors, 4], "scores": [1, n_anchors, num_classes]},
+        "preprocessing": "resize, BGR->RGB, ImageNet mean/std over 0-255",
+    }
+    update_manifest(art_dir, "tflite_f32", {
+        **manifest_common,
+        "file": f32_path.name,
+        "size_bytes": f32_path.stat().st_size,
+        "parity_vs_pytorch": f32_parity,
+    })
 
     if args.skip_int8:
+        update_latest_symlink(art_dir)
         return
 
     # ---- full-int8 static PTQ (ai-edge-quantizer on the float flatbuffer) ----
@@ -213,7 +245,7 @@ def main():
 
     qt = aeq_quantizer.Quantizer(f32_path, aeq_recipe.static_wi8_ai8())
     calib_result = qt.calibrate({sig_key: calib_inputs})
-    q_path = out_dir / f"{model_name}.int8.tflite"
+    q_path = art_dir / "model.int8.tflite"
     qt.quantize(calib_result, serialize_to_path=q_path)
     print(f"Wrote {q_path}")
 
@@ -223,10 +255,21 @@ def main():
     with torch.no_grad():
         fb, fs = model(x)
     qb, qs = run_tflite(q_path, x.permute(0, 2, 3, 1).contiguous())
-    parity("int8 parity", fb.numpy(), fs.numpy(), qb, qs)
+    int8_parity = parity("int8 parity", fb.numpy(), fs.numpy(), qb, qs)
+
+    update_manifest(art_dir, "tflite_int8", {
+        **manifest_common,
+        "file": q_path.name,
+        "size_bytes": q_path.stat().st_size,
+        "quantization": "ai-edge-quantizer static_wi8_ai8 (full-int8 static PTQ)",
+        "calibration_images": len(calib_inputs),
+        "calibration_root": str(calib_root),
+        "parity_vs_pytorch": int8_parity,
+    })
+    update_latest_symlink(art_dir)
 
     print("\nArtifacts:")
-    for p in (f32_path, q_path):
+    for p in (f32_path, q_path, art_dir / "manifest.json"):
         print(f"  {p}  ({p.stat().st_size / 1e6:.1f} MB)")
 
 
