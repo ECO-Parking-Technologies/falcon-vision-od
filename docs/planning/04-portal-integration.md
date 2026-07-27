@@ -1,49 +1,61 @@
-# 04 — Portal Integration: Pulling Training Images (design settled 2026-07-27; build pending)
+# 04 — Training Image Acquisition (design settled 2026-07-27; build pending)
 
-Goal: automatically pull diverse training images across **all garages**, replacing the manual external-drive workflow.
+Goal: feed the OD model diverse vehicle imagery from **all garages**, automatically and organized — in service of the only metric that matters: **detect vehicles more accurately and faster than the off-the-shelf model**. (Spot definitions / occupancy geometry are explicitly out of scope here; a note on them at the bottom.)
 
 ## The two image sources (both proven in falcon-vision-ml code)
 
-**A. Sensor training-image store** — each sensor keeps images at `/media/sdcard/images/training`, served over HTTPS behind **Cloudflare Access** (service token: `CF_ACCESS_CLIENT_ID`/`SECRET`):
+**A. Sensor training-image store** — each sensor keeps images at `/media/sdcard/images/training`, served over HTTPS behind **Cloudflare Access**:
 - Sensor URL: `https://<sensor-host>.fvg-<garage>.private.ecofalcondata.com` (or from portal `sensorRemoteConnection {host, port, https}`)
 - Enumerate sensors: `POST <gateway>/plugin/registered-sensor/enum` → `sensorList[].hstNm`
 - List images per hour: `GET <sensor>/training-image/files/{yyyy}/{m}/{d}/{h}`; fetch: `GET <sensor>/training-image/image/{filename}`
-- Working reference implementation: `falcon-vision-ml/data_pipeline/dnn/falcon_sensor_training_image_download.py` (+ `.yml`) — time window, `interval` minutes between images, camera filter, `sensors: ['*']`, discovery caching, resume, writes the exact `{garage}/training_images/{sensor}/` layout our training consumes.
+- Reference impl: `falcon-vision-ml/data_pipeline/dnn/falcon_sensor_training_image_download.py`
 
-**B. Portal snapshots (the big archive)** — via GraphQL `validations` → `validationParkingSpaces` → `snapshotParkingSpace`:
-- `originalImageUrlSigned` = **full camera frame** via S3-presigned URL (plain GET, no auth); `imageUrlSigned` = per-spot ROI crop.
-- Alternative direct-from-sensor: `GET <sensor_url>/plugin/snapshot/get/{sensorSnapshotId}` (Cloudflare Access) → base64 full frame + per-space crops.
-- Working reference: `falcon-vision-ml/inference/dnn/portal_validation_viewer.py` (`PortalAPIClient` ~L431-680, `SensorImageFetcher` ~L221-420).
+**B. Portal snapshot archive** (the big one) — GraphQL `validations` → `validationParkingSpaces` → `snapshotParkingSpace`:
+- `originalImageUrlSigned` = **full camera frame** via presigned S3 URL (plain GET); or direct from sensor: `GET <sensor_url>/plugin/snapshot/get/{sensorSnapshotId}` (base64 full frame).
+- Reference impl: `falcon-vision-ml/inference/dnn/portal_validation_viewer.py` (`PortalAPIClient` ~L431-680).
 
-**⚠️ Our extracted API docs (docs/portal-api/) are stale/incomplete**: the live API serves `validations`, `snapshot`, and `Sensor.sensorRemoteConnection`, none of which appear in the SpectaQL dump. Regenerate the reference via GraphQL introspection against the live endpoint (small task, do it during the build).
+**⚠️ docs/portal-api/ is stale** — live API also serves `validations`, `snapshot`, `Sensor.sensorRemoteConnection`; regenerate via GraphQL introspection during the build.
 
-## Bonus findings (feed tracks 05/06)
+## Unified image store — merge both sources, download once, never again
 
-- `snapshotParkingSpace.bounds` = 4-point spot polygon in **normalized 0-1 coords** → the spot-definition source for the occupancy evaluator (point order NOT guaranteed — sort explicitly; see viewer `extract_roi` L96-145).
-- Validations carry **human-labeled occupancy ground truth** (`validationParkingSpaceResponses.occupancyStatus`, overrides; encoding 1=vacant 2=occupied) tied to snapshots — ready-made eval data for track 06, and a source of auto-labels for `InEcoParkingSpot`-style training signal.
-- `reportedOccupancyStatus`, `rawInference/inference/filteredInference` per spot = the current production model's outputs, directly comparable.
+Both sources yield static, immutable files → strict download-once semantics:
 
-## Auto-discovery design (no manual garage lists)
+```
+<data_root>/
+  images/<garage>/<sensor>/<camera>/<YYYY>/<MM>/<sensor>-<camera>-<ts>.<ext>
+  manifest.sqlite
+```
 
-Portal is the source of truth; Cloudflare gateways do the heavy pulling:
+- **Manifest** (SQLite) is the gate for every download: rows keyed by stable source identity — source A: `(sensor, filename)`; source B: `snapshotParkingSpace`/`sensorSnapshotId` uuid — plus garage, sensor, camera, capture timestamp, sha256, byte size, pulled_at, source. **If the key is in the manifest, no HTTP request is made.** Interrupted pulls resume for free.
+- **Merge + dedup**: both sources can capture the same scene; after download, content-hash (sha256) dedup keeps one copy, manifest records both provenances pointing at it. Near-duplicate frames (static scene, nothing moved) filtered by perceptual hash before entering the annotation queue.
+- One layout for both sources; the training wrapper consumes it directly (or via a thin split/symlink step, as today).
 
-1. GraphQL: `organizations(isDeleted:false)` → `sites(organizationId, isDeleted:false)` (skip `isDataPollingActive:false` as appropriate).
-2. Per site, get sensors + `sensorRemoteConnection {host, port, https}`; keep sites whose sensor hosts match `*.ecofalcondata.com` → those are pullable garages. (Fallback: derive gateway `https://legacy.fvg-<site.name>.private.ecofalcondata.com` and enumerate via `/plugin/registered-sensor/enum`.)
-3. Auto-populate the downloader config from that list — garages appear/disappear as the portal changes, no YAML edits.
+## Credentials: RAM only, never on disk
 
-## Sampling strategy (diversity over volume)
+Both secrets are pasted into the terminal at start of a pull and held only in process memory:
+
+- **Portal API refresh token** and **CF Access client id/secret** via `getpass`-style prompts (no echo). No key files (deliberately NOT the viewer's `~/.eco_portal_key.txt` pattern), no env vars written to profiles, no values in YAML/config.
+- Never passed as CLI arguments (shell history), never logged, never written into the manifest or cache files.
+- **Presigned URLs count as secrets** (they embed access signatures): fetch-and-discard, never persisted to manifest/logs; store the stable snapshot uuid instead.
+- OAuth access tokens refreshed in memory (~20 min lifetime, refresh at expiry — don't re-exchange per request; the token endpoint is rate-limited).
+
+## Auto-discovery (no manual garage lists)
+
+1. GraphQL: `organizations(isDeleted:false)` → `sites(...)` → sensors with `sensorRemoteConnection`.
+2. Keep sensors whose host matches `*.ecofalcondata.com` → pullable garages, discovered fresh each run. (Fallback: derive gateway `https://legacy.fvg-<site.name>.private.ecofalcondata.com` + `/plugin/registered-sensor/enum`.)
+
+## Sampling: diversity over volume
 
 Few images per sensor per time window, spread wide:
-- Cap per sensor per pull (e.g. hourly interval like the existing downloader default, or N/day), across **all** garages rather than deep dives into one.
-- Spread across time-of-day buckets (morning/day/evening/night) and calendar days; prefer occupancy-change moments (`parkingSpaceDataPoints` timestamps) over static repeats.
-- Dedup near-identical frames (content hash / perceptual hash) before they reach annotation.
-- Manifest (JSON/SQLite) recording source, sensor, timestamp, hash → resumable, idempotent pulls.
+- Cap per sensor per pull (hourly-interval default like the existing downloader; tune later), across **all** garages rather than deep dives into one.
+- Spread across time-of-day buckets and calendar days; prefer occupancy-change moments over static repeats; perceptual-hash out the near-identical frames.
+- The cap + manifest make repeated runs incremental: each run tops up new time windows only.
 
 ## Build tasks
 
 - [ ] Regenerate portal API reference via live GraphQL introspection.
-- [ ] `portal/` module in this repo: OAuth2 token handling (refresh-token file like `~/.eco_portal_key.txt`), org→site→sensor discovery, gateway resolution.
-- [ ] Puller combining source A (training-image store) with the auto-discovered garage list; politeness added (timeouts, retry/backoff, modest concurrency — the reference scripts have none).
-- [ ] Snapshot puller for source B (validations → signed full-frame URLs) with the same manifest/dedup.
-- [ ] Sampling/dedup layer per the strategy above; output into the training data layout.
-- [ ] Export spot polygons per sensor from `snapshotParkingSpace.bounds` for track 06.
+- [ ] `portal/` module: RAM-only credential prompts, OAuth refresh handling, org→site→sensor discovery, gateway resolution.
+- [ ] Unified puller (sources A + B) with manifest-gated download-once, sha256 + perceptual-hash dedup, politeness (timeouts, retry/backoff, modest concurrency — the reference scripts have none).
+- [ ] Sampling layer (per-sensor caps, time-bucket spread) → images land in the unified layout ready for preannotation → CVAT.
+
+*Parked (not current focus):* `snapshotParkingSpace.bounds` spot polygons and the human occupancy labels in validations remain available for the track-06 evaluator whenever spot-level evaluation becomes relevant.
