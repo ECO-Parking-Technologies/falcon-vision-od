@@ -9,3 +9,4 @@ Ordered by expected value per effort.
 5. [ ] Dataset composition: currently garage data + class-filtered full COCO (~71.5k images, COCO-dominated). Revisit ratio/sampling weights once portal data scales up — our domain images should dominate late training.
 6. [ ] Eval hygiene: val split is COCO-heavy, so eval mAP under-represents garage performance; add a garage-only val metric.
 7. [ ] Later (roadmap "Change Training Loop"): LR finder + cyclic LR, stronger augmentation (mixup/cutmix already exist in upstream train.py flags), QAT if PTQ int8 costs accuracy.
+- [ ] Auto-run both exporters at end of training (config flag) so artifacts appear without manual steps
