@@ -303,6 +303,42 @@ def run_training(cfg_path):
     args_ns = train.parser.parse_args(cli_args)
     train.main(args_ns)
 
+    # 6) auto-export artifacts from this run's best checkpoint
+    if cfg.get("export_after_training", True):
+        export_artifacts(cfg)
+
+
+def export_artifacts(cfg):
+    """Run all exporters against the newest best checkpoint so the full
+    artifact set (TorchScript, f32/dynamic/int8 TFLite, drop-in package)
+    is ready to pull without manual steps."""
+    import subprocess
+
+    out_dir = Path(cfg["output_dir"])
+    ckpts = sorted(out_dir.glob("train/*/model_best.pth.tar"), key=lambda p: p.stat().st_mtime)
+    if not ckpts:
+        print("[export] no best checkpoint found, skipping export")
+        return
+    ckpt = str(ckpts[-1])
+    repo = Path(__file__).parent
+    export_py = repo / "falcon-vision-od-export-venv" / "bin" / "python"
+    env = {"PYTHONPATH": str(repo), "PATH": "/usr/bin:/bin", "CUDA_VISIBLE_DEVICES": ""}
+    jobs = [
+        [sys.executable, str(repo / "generate_model_files.py"), "--checkpoint", ckpt],
+    ]
+    if export_py.exists():
+        jobs.append([str(export_py), str(repo / "export_tflite.py"), "--checkpoint", ckpt])
+        if (repo / "package_dropin.py").exists():
+            jobs.append([str(export_py), str(repo / "package_dropin.py"),
+                         "--checkpoint", ckpt, "--validate"])
+    else:
+        print("[export] export venv missing (run setup_export_venv.sh) — TFLite export skipped")
+    for job in jobs:
+        print("[export] running:", " ".join(job[1:2] + job[2:]))
+        r = subprocess.run(job, cwd=repo, env=env)
+        if r.returncode != 0:
+            print(f"[export] FAILED (rc={r.returncode}): {job[1]} — continuing")
+
 
 if __name__ == "__main__":
     import argparse
