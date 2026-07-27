@@ -19,3 +19,6 @@ clearml>=1.10.0
 
 # Training wrapper
 pytorch-lightning>=2.0.0
+
+# Portal image puller UI
+rich>=13.0

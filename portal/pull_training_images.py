@@ -19,7 +19,6 @@ Usage:
         [--source a|b|both] [--garages name1,name2] [--list-garages]
 """
 import argparse
-import getpass
 import hashlib
 import logging
 import re
@@ -30,8 +29,58 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 import requests
+from rich import box
+from rich.console import Console
+from rich.live import Live
+from rich.panel import Panel
+from rich.prompt import Prompt
+from rich.table import Table
 
+console = Console()
 log = logging.getLogger("pull")
+
+
+def setup_logging(log_file: Path):
+    """Full detail goes to the log file; the console stays reserved for rich UI."""
+    logging.basicConfig(
+        level=logging.DEBUG,
+        format="%(asctime)s [%(levelname)s] %(message)s",
+        handlers=[logging.FileHandler(log_file)],
+        force=True,
+    )
+    for noisy in ("requests", "urllib3"):
+        logging.getLogger(noisy).setLevel(logging.WARNING)
+
+
+class PullStats:
+    """Per-(garage, sensor) counters rendered as a live rich table."""
+
+    EVENTS = ("new", "dup", "cached", "error")
+
+    def __init__(self):
+        self.rows = {}
+        self.current = ""
+
+    def bump(self, garage, sensor, event):
+        row = self.rows.setdefault((garage, sensor), dict.fromkeys(self.EVENTS, 0))
+        row[event] += 1
+
+    def table(self):
+        t = Table(title="Training image pull", box=box.SIMPLE_HEAD)
+        for col, style in (("garage", "cyan"), ("sensor", "cyan"), ("new", "green"),
+                           ("dup", "yellow"), ("cached", "dim"), ("errors", "red")):
+            t.add_column(col, style=style, justify="right" if col not in ("garage", "sensor") else "left")
+        totals = dict.fromkeys(self.EVENTS, 0)
+        for (g, s), r in sorted(self.rows.items()):
+            t.add_row(g, s, *(str(r[e]) for e in self.EVENTS))
+            for e in self.EVENTS:
+                totals[e] += r[e]
+        if self.rows:
+            t.add_section()
+            t.add_row("total", f"{len(self.rows)} sensors", *(str(totals[e]) for e in self.EVENTS))
+        if self.current:
+            t.caption = self.current
+        return t
 
 PORTAL_GRAPHQL = "https://api.ecoparkingtechnologies.com/graphql"
 PORTAL_TOKEN_URL = "https://identity.ecoparkingtechnologies.com/token"
@@ -220,21 +269,24 @@ def parse_ts_arg(s: str) -> datetime:
 
 
 def pull_source_a(cf, manifest, data_root, garage, gateway, start, end, interval_min,
-                  max_per_sensor):
+                  max_per_sensor, notify):
     """Sensor training-image stores: list per hour, sample by interval, download once."""
     try:
         sensors = cf.enum_sensors(gateway)
+        log.info("%s: %d sensors at %s", garage, len(sensors), gateway)
     except Exception as e:
         log.info("skip %s (gateway unreachable: %s)", garage, e)
         return 0
     pulled = 0
     for host in sensors:
         base = cf.sensor_url(gateway, host)
+        sensor = host.lower()
         last_kept = None
         kept = 0
         for t in hour_range(start, end):
             if max_per_sensor and kept >= max_per_sensor:
                 break
+            notify(garage, sensor, None, f"{garage}/{sensor} listing {t:%Y-%m-%d %H}h")
             url = f"{base}/training-image/files/{t.year}/{t.month}/{t.day}/{t.hour}"
             try:
                 r = http_get(cf.session, url)
@@ -253,17 +305,21 @@ def pull_source_a(cf, manifest, data_root, garage, gateway, start, end, interval
                 key = f"{host}/{name}"
                 if manifest.has("sensor-store", key):
                     last_kept = when
+                    notify(garage, sensor, "cached")
                     continue
                 try:
                     img = http_get(cf.session, f"{base}/training-image/image/{name}")
                     img.raise_for_status()
                 except Exception as e:
                     log.warning("download failed %s: %s", name, e)
+                    notify(garage, sensor, "error")
                     continue
-                dest = (data_root / "images" / garage / host.lower() /
+                dest = (data_root / "images" / garage / sensor /
                         f"{when:%Y}" / f"{when:%m}" / name)
-                store_bytes(img.content, dest, manifest, "sensor-store", key,
-                            garage, host.lower(), when.isoformat())
+                new = store_bytes(img.content, dest, manifest, "sensor-store", key,
+                                  garage, sensor, when.isoformat())
+                log.info("%s %s", "stored" if new else "dedup", key)
+                notify(garage, sensor, "new" if new else "dup")
                 last_kept = when
                 kept += 1
                 pulled += 1
@@ -272,19 +328,21 @@ def pull_source_a(cf, manifest, data_root, garage, gateway, start, end, interval
     return pulled
 
 
-def pull_source_b(portal, manifest, data_root, site, max_per_site):
+def pull_source_b(portal, manifest, data_root, site, max_per_site, notify):
     """Portal snapshot archive: full frames from completed validations, download once."""
     garage = re.sub(r"[^a-z0-9_-]+", "_", site["display"].lower())
     pulled = 0
     try:
         validations = [v for v in portal.validations_for_site(site["site_id"])
                        if v.get("validationState") == "completed"]
+        log.info("%s: %d completed validations", garage, len(validations))
     except Exception as e:
         log.info("skip %s validations (%s)", garage, e)
         return 0
     for v in sorted(validations, key=lambda x: x.get("createdTimestamp", ""), reverse=True):
         if max_per_site and pulled >= max_per_site:
             break
+        notify(garage, "*", None, f"{garage} validation {v['id'][:8]}…")
         try:
             frames = portal.validation_frames(v["id"])
         except Exception as e:
@@ -292,6 +350,7 @@ def pull_source_b(portal, manifest, data_root, site, max_per_site):
             continue
         for fr in frames:
             if manifest.has("portal-snapshot", fr["uuid"]):
+                notify(garage, fr["sensor"], "cached")
                 continue
             try:
                 # presigned URL: auth is embedded, use a bare session; never persist it
@@ -299,13 +358,15 @@ def pull_source_b(portal, manifest, data_root, site, max_per_site):
                 r.raise_for_status()
             except Exception as e:
                 log.warning("snapshot fetch failed %s: %s", fr["uuid"], e)
+                notify(garage, fr["sensor"], "error")
                 continue
-            when = fr["ts"][:19].replace(":", "").replace("-", "") or "unknown"
             dest = (data_root / "images" / garage / fr["sensor"] /
                     fr["ts"][:4] / fr["ts"][5:7] /
                     f"{fr['sensor']}-snapshot-{fr['uuid']}.jpg")
-            store_bytes(r.content, dest, manifest, "portal-snapshot", fr["uuid"],
-                        garage, fr["sensor"], fr["ts"])
+            new = store_bytes(r.content, dest, manifest, "portal-snapshot", fr["uuid"],
+                              garage, fr["sensor"], fr["ts"])
+            log.info("%s snapshot %s", "stored" if new else "dedup", fr["uuid"])
+            notify(garage, fr["sensor"], "new" if new else "dup")
             pulled += 1
             if max_per_site and pulled >= max_per_site:
                 break
@@ -329,57 +390,86 @@ def main():
     ap.add_argument("--garages", help="comma-separated site-name filter (default: all)")
     ap.add_argument("--list-garages", action="store_true",
                     help="discover and list sites, then exit (portal token only)")
-    ap.add_argument("-v", "--verbose", action="store_true")
+    ap.add_argument("--log-file", type=Path, default=None,
+                    help="log file (default: <data-root>/pull.log)")
     args = ap.parse_args()
 
-    logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,
-                        format="%(levelname)s %(message)s")
+    args.data_root.mkdir(parents=True, exist_ok=True)
+    log_file = args.log_file or args.data_root / "pull.log"
+    setup_logging(log_file)
 
-    # --- credentials: prompted, RAM only, never logged/persisted ---
-    portal_token = getpass.getpass("Portal API refresh token: ").strip()
+    # --- credentials: prompted (no echo), RAM only, never logged/persisted ---
+    console.print(Panel("Credentials are held in memory only — never written to disk.\n"
+                        f"Detailed log: [bold]{log_file}[/bold]",
+                        title="Training image pull", border_style="cyan"))
+    portal_token = Prompt.ask("[cyan]Portal API refresh token[/cyan]",
+                              password=True, console=console).strip()
     if not portal_token:
         sys.exit("portal token required")
     portal = PortalClient(portal_token)
 
-    sites = portal.discover_sites()
+    with console.status("Discovering organizations and sites…"):
+        sites = portal.discover_sites()
     if args.garages:
         wanted = {g.strip().lower() for g in args.garages.split(",")}
         sites = [s for s in sites if s["name"].lower() in wanted
                  or s["display"].lower() in wanted]
-    print(f"{len(sites)} site(s) discovered")
+    log.info("discovered %d sites", len(sites))
+
     if args.list_garages:
+        t = Table(title=f"{len(sites)} site(s)", box=box.SIMPLE_HEAD)
+        t.add_column("organization", style="dim")
+        t.add_column("site name", style="cyan")
+        t.add_column("display name")
         for s in sites:
-            print(f"  {s['org']:>20s} / {s['name']:<25s} ({s['display']})")
+            t.add_row(s["org"], s["name"], s["display"])
+        console.print(t)
         return
+    console.print(f"[green]{len(sites)}[/green] site(s) discovered")
 
-    args.data_root.mkdir(parents=True, exist_ok=True)
-    manifest = Manifest(args.data_root / "manifest.sqlite")
-
-    total = 0
+    cf = None
     if args.source in ("a", "both"):
         if not (args.start and args.end):
             sys.exit("--start/--end required for source a")
         cf = CloudflareAccess(
-            input("CF-Access-Client-Id: ").strip(),
-            getpass.getpass("CF-Access-Client-Secret: ").strip(),
+            Prompt.ask("[cyan]CF-Access-Client-Id[/cyan]", console=console).strip(),
+            Prompt.ask("[cyan]CF-Access-Client-Secret[/cyan]",
+                       password=True, console=console).strip(),
         )
-        start, end = parse_ts_arg(args.start), parse_ts_arg(args.end)
-        for s in sites:
-            gateway = GATEWAY_TEMPLATE.format(site=s["name"].lower())
-            n = pull_source_a(cf, manifest, args.data_root, s["name"].lower(), gateway,
-                              start, end, args.interval_min, args.max_per_sensor)
-            if n:
-                print(f"  {s['name']}: +{n} sensor-store images")
-            total += n
 
-    if args.source in ("b", "both"):
-        for s in sites:
-            n = pull_source_b(portal, manifest, args.data_root, s, args.max_per_site)
-            if n:
-                print(f"  {s['display']}: +{n} portal snapshots")
-            total += n
+    manifest = Manifest(args.data_root / "manifest.sqlite")
+    stats = PullStats()
+    total = 0
 
-    print(f"done: {total} new images (manifest: {args.data_root/'manifest.sqlite'})")
+    with Live(stats.table(), console=console, refresh_per_second=4) as live:
+        def notify(garage, sensor, event, current=None):
+            if event:
+                stats.bump(garage, sensor, event)
+            if current is not None:
+                stats.current = current
+            live.update(stats.table())
+
+        if args.source in ("a", "both"):
+            start, end = parse_ts_arg(args.start), parse_ts_arg(args.end)
+            for s in sites:
+                gateway = GATEWAY_TEMPLATE.format(site=s["name"].lower())
+                total += pull_source_a(cf, manifest, args.data_root,
+                                       s["name"].lower(), gateway, start, end,
+                                       args.interval_min, args.max_per_sensor, notify)
+
+        if args.source in ("b", "both"):
+            for s in sites:
+                total += pull_source_b(portal, manifest, args.data_root, s,
+                                       args.max_per_site, notify)
+
+        stats.current = ""
+        live.update(stats.table())
+
+    console.print(Panel(f"[green]{total}[/green] new images pulled\n"
+                        f"manifest: {args.data_root / 'manifest.sqlite'}\n"
+                        f"log: {log_file}",
+                        title="Done", border_style="green"))
+    log.info("run complete: %d new images", total)
 
 
 if __name__ == "__main__":
