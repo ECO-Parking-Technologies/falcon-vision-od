@@ -290,6 +290,10 @@ def run_training(cfg_path):
         cfg["output_dir"],
         str(split_dir),  # this root now has remapped JSONs + symlinks
     ]
+    if cfg.get("pretrained"):
+        cli_args.append("--pretrained")
+    if not cfg.get("pretrained_backbone"):
+        cli_args.append("--no-pretrained-backbone")
     if cfg.get("amp", False):
         cli_args.append("--amp")
     if cfg.get("extra_args"):

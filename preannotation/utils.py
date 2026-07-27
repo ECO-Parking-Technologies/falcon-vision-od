@@ -28,8 +28,9 @@ def convert_detections(detections, label_map, allowed_labels, threshold=0.25):
         label_id = int(cls)
         label_name = label_map.get(label_id, "unknown")
 
-        if label_id not in allowed_labels:
-            continue
+        if allowed_labels is not None:
+            if label_id not in allowed_labels:
+                continue
 
         x = float(xmin)
         y = float(ymin)

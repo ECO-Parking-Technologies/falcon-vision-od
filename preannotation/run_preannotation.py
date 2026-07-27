@@ -46,6 +46,7 @@ def run_inference_on_sensor(
     allowed_labels,
     threshold,
     visualize=None,
+    crop_cfg=None,
 ):
     # build a new→orig ID map for remapping
     _, id_map = remap_label_map(label_map)
@@ -57,23 +58,35 @@ def run_inference_on_sensor(
     all_detections = []
 
     for image_file in images:
-        image_path = sensor_path / image_file
-        image = cv2.imread(str(image_path))
-        if image is None:
-            print(f"[WARN] Could not load image: {image_path}")
+        full_img = cv2.imread(str(sensor_path / image_file))
+        if full_img is None:
+            print(f"[WARN] Could not load image: {image_file}")
             continue
 
-        orig_h, orig_w = image.shape[:2]
-        inference_time, raw_dets = model.infer(image, (input_w, input_h))
+        # 1) Crop the frame if requested
+        if crop_cfg:
+            x0 = crop_cfg.get("x", 0)
+            y0 = crop_cfg.get("y", 0)
+            cw = crop_cfg.get("width", full_img.shape[1] - x0)
+            ch = crop_cfg.get("height", full_img.shape[0] - y0)
+            img = full_img[y0 : y0 + ch, x0 : x0 + cw]
+        else:
+            img = full_img
+            x0 = y0 = 0
+            cw, ch = img.shape[1], img.shape[0]
 
-        # running avg time
+        # 2) Run inference
+        inference_time, raw_dets = model.infer(img, (input_w, input_h))
+
+        # 3) Compute running average time
         total_time += inference_time
         img_count += 1
         avg_time = total_time / img_count
 
-        # overlay avg inference time
+        # 4) Overlay timing on the cropped view
+        disp = img.copy()
         cv2.putText(
-            image,
+            disp,
             f"Avg inf: {avg_time:.3f}s",
             (10, 30),
             cv2.FONT_HERSHEY_SIMPLEX,
@@ -82,45 +95,49 @@ def run_inference_on_sensor(
             2,
         )
 
-        # remap model’s class IDs → original COCO IDs
+        # 5) Remap the model’s class IDs back to your original COCO IDs
         if raw_dets.size:
-            remapped = raw_dets.copy()
-            for i in range(remapped.shape[0]):
-                cls_new = int(remapped[i, 5])
-                remapped[i, 5] = inv_id_map.get(cls_new, -1)
-            raw_dets = remapped
+            rem = raw_dets.copy()
+            for i in range(rem.shape[0]):
+                rem[i, 5] = inv_id_map.get(int(rem[i, 5]), -1)
+            raw_dets = rem
 
-        # filter by label & threshold
-        detections = convert_detections(
+        # print(f"[DEBUG] top scores:", sorted(raw_dets[:, 4], reverse=True)[:5])
+
+        # 6) Filter by score + allowed labels
+        dets = convert_detections(
             raw_dets,
             label_map=label_map,
             allowed_labels=allowed_labels,
             threshold=threshold,
         )
 
-        # scale boxes and collect
-        scale_x = orig_w / float(input_w)
-        scale_y = orig_h / float(input_h)
-        for det in detections:
+        # 7) Rescale and reproject boxes into full-frame coords
+        sx = cw / float(input_w)
+        sy = ch / float(input_h)
+        for det in dets:
             x, y, w_box, h_box = det["bbox"]
-            x1, y1 = x * scale_x, y * scale_y
-            w1, h1 = w_box * scale_x, h_box * scale_y
+            x1 = x * sx + x0
+            y1 = y * sy + y0
+            w1 = w_box * sx
+            h1 = h_box * sy
             det["bbox"] = [x1, y1, w1, h1]
             det["image_file"] = image_file
             all_detections.append(det)
 
             if visualize:
+                # draw on the cropped display
                 cv2.rectangle(
-                    image,
-                    (int(x1), int(y1)),
-                    (int(x1 + w1), int(y1 + h1)),
+                    disp,
+                    (int(x1 - x0), int(y1 - y0)),
+                    (int(x1 - x0 + w1), int(y1 - y0 + h1)),
                     (0, 255, 0),
                     2,
                 )
                 cv2.putText(
-                    image,
+                    disp,
                     f"{det['label']} {det['score']:.2f}",
-                    (int(x1), int(y1) - 10),
+                    (int(x1 - x0), int(y1 - y0) - 10),
                     cv2.FONT_HERSHEY_SIMPLEX,
                     0.5,
                     (0, 255, 0),
@@ -128,7 +145,7 @@ def run_inference_on_sensor(
                 )
 
         if visualize:
-            cv2.imshow("annotated", image)
+            cv2.imshow("annotated", disp)
             if cv2.waitKey(visualize) == 27:
                 break
 
@@ -142,10 +159,20 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=str, required=True, help="Path to config.yaml")
     parser.add_argument(
-        "--visualize", type=int, default=0, help="Visualization delay in ms (0 to disable)"
+        "--visualize",
+        type=int,
+        default=0,
+        help="Visualization delay in ms (0 to disable)",
     )
     parser.add_argument(
-        "--dry-run", action="store_true", help="Run inference without writing preannotations files"
+        "--dry-run",
+        action="store_true",
+        help="Run inference without writing preannotations files",
+    )
+    parser.add_argument(
+        "--no-class-filtering",
+        action="store_true",
+        help="Disable filtering of allowed labels (use all labels in label_map)",
     )
     args = parser.parse_args()
 
@@ -167,7 +194,9 @@ def main():
     else:
         model_file_cfg = cfg.get("model_file", None)
         if not model_file_cfg:
-            sys.exit("❌ 'model_file' must be specified when use_pretrained_model is False")
+            sys.exit(
+                "❌ 'model_file' must be specified when use_pretrained_model is False"
+            )
         model_path = Path(model_file_cfg)
         if not model_path.exists():
             sys.exit(f"❌ model_file not found: {model_file_cfg}")
@@ -175,13 +204,18 @@ def main():
         # use your custom class count (allowed_labels + background)
         allowed_labels = cfg.get("allowed_labels", list(load_label_map().keys()))
         num_classes = len(allowed_labels) + 1
-        print(f"[INFO] Using custom model '{model_path.name}', num_classes={num_classes}")
+        print(
+            f"[INFO] Using custom model '{model_path.name}', num_classes={num_classes}"
+        )
 
     print(f"[INFO] Using model path: {model_path}")
 
     # load label map & pick your classes
     label_map = load_label_map()
-    allowed_labels = cfg.get("allowed_labels", list(label_map.keys()))
+    if args.no_class_filtering:
+        allowed_labels = None
+    else:
+        allowed_labels = cfg.get("allowed_labels", list(label_map.keys()))
     threshold = cfg.get("threshold", 0.25)
 
     # export CVAT label config
@@ -193,6 +227,7 @@ def main():
         model_path=str(model_path),
         model_name=model_type,
         num_classes=num_classes,
+        pretrained_backbone=cfg.get("pretrained_backbone", True),
     )
 
     # iterate garages/sensors
@@ -202,7 +237,9 @@ def main():
             continue
 
         sensor_list = sorted(p for p in garage_dir.iterdir() if p.is_dir())
-        with tqdm(total=len(sensor_list), desc=f"Garage: {garage}", unit="sensor") as pbar:
+        with tqdm(
+            total=len(sensor_list), desc=f"Garage: {garage}", unit="sensor"
+        ) as pbar:
             for sensor_dir in sensor_list:
                 output_json = sensor_dir / "preannotations.coco.json"
                 detections = run_inference_on_sensor(
@@ -214,10 +251,13 @@ def main():
                     allowed_labels,
                     threshold,
                     visualize=args.visualize,
+                    crop_cfg=cfg.get("crop", None),
                 )
 
                 if args.dry_run:
-                    print(f"[DRY-RUN] Skipping write of {output_json} ({len(detections)} detections)")
+                    print(
+                        f"[DRY-RUN] Skipping write of {output_json} ({len(detections)} detections)"
+                    )
                 else:
                     convert_detections_to_coco(
                         label_map, garage, sensor_dir, detections, str(output_json)

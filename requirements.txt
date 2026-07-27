@@ -20,7 +20,6 @@ clearml>=1.10.0
 # Training wrapper
 pytorch-lightning>=2.0.0
 
-# ONNX export & conversion
 onnx>=1.17.0
 onnx2tf==1.22.3
 
