@@ -75,10 +75,13 @@ Outputs land in `experiments/falcon-vision-effdet/train/<timestamp>-<model>/` (c
 ## Export
 
 ```bash
-python3 generate_model_files.py            # newest best checkpoint → TorchScript .pt
+python3 generate_model_files.py            # newest best checkpoint → TorchScript .pt (for preannotation)
+
+bash setup_export_venv.sh                  # once: separate venv for the TFLite toolchain
+PYTHONPATH=. falcon-vision-od-export-venv/bin/python export_tflite.py
 ```
 
-Produces the float TorchScript model used by the preannotation pipeline. The deployable **int8 TFLite export (via ai-edge-torch, with representative-dataset calibration)** is the next piece of the toolchain to be built. Off-the-shelf COCO checkpoints downloaded for evaluation live in `weights/` (gitignored).
+[export_tflite.py](export_tflite.py) exports the newest best checkpoint to float32 and **full-int8 TFLite** (litert-torch conversion + ai-edge-quantizer static PTQ calibrated on real garage images), with built-in PyTorch↔TFLite parity checks. Input is NHWC like the firmware baseline; outputs are pre-NMS boxes/scores (post-process contract tracked in [docs/planning/03-tflite-export.md](docs/planning/03-tflite-export.md)). Off-the-shelf COCO checkpoints downloaded for evaluation live in `weights/` (gitignored).
 
 ---
 

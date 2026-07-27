@@ -139,8 +139,9 @@ dmypy.json
 # Pytorch models
 *.pt
 
-# python venv
+# python venvs
 falcon-vision-od-venv
+falcon-vision-od-export-venv
 
 # output directory
 experiments/
