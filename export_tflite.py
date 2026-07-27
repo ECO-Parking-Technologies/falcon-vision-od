@@ -81,6 +81,13 @@ def calibration_images(calib_root, count, seed=0):
     return files[:count]
 
 
+def tflite_ops(path):
+    """Sorted op names used by a tflite model (for runtime-compat review)."""
+    it = Interpreter(model_path=str(path))
+    it.allocate_tensors()
+    return sorted({d["op_name"] for d in it._get_ops_details()})
+
+
 def run_tflite(path, x):
     """Run a (possibly int8) tflite model on a float NCHW tensor; return float (boxes, scores)."""
     it = Interpreter(model_path=str(path))
@@ -215,7 +222,26 @@ def main():
         **manifest_common,
         "file": f32_path.name,
         "size_bytes": f32_path.stat().st_size,
+        "ops": tflite_ops(f32_path),
         "parity_vs_pytorch": f32_parity,
+    })
+
+    # ---- dynamic-range quant (int8 weights, float32 activations) ----
+    # Friendly to older TFLite runtimes (the current sensor lib predates
+    # new-style full-int8); ~4x smaller than f32 with float compute I/O.
+    dyn_path = art_dir / "model.dynamic.tflite"
+    qt_dyn = aeq_quantizer.Quantizer(f32_path, aeq_recipe.dynamic_wi8_afp32())
+    qt_dyn.quantize(serialize_to_path=dyn_path)
+    print(f"Wrote {dyn_path}")
+    db, ds = run_tflite(dyn_path, sample[0])
+    dyn_parity = parity("dynamic parity", ref_boxes.numpy(), ref_scores.numpy(), db, ds)
+    update_manifest(art_dir, "tflite_dynamic", {
+        **manifest_common,
+        "file": dyn_path.name,
+        "size_bytes": dyn_path.stat().st_size,
+        "quantization": "ai-edge-quantizer dynamic_wi8_afp32 (int8 weights, f32 activations)",
+        "ops": tflite_ops(dyn_path),
+        "parity_vs_pytorch": dyn_parity,
     })
 
     if args.skip_int8:
@@ -262,14 +288,17 @@ def main():
         "file": q_path.name,
         "size_bytes": q_path.stat().st_size,
         "quantization": "ai-edge-quantizer static_wi8_ai8 (full-int8 static PTQ)",
+        "runtime_note": "needs a modern LiteRT/TFLite runtime; current sensor lib "
+                        "is too old for new-style int8 — use f32/dynamic there until upgraded",
         "calibration_images": len(calib_inputs),
         "calibration_root": str(calib_root),
+        "ops": tflite_ops(q_path),
         "parity_vs_pytorch": int8_parity,
     })
     update_latest_symlink(art_dir)
 
     print("\nArtifacts:")
-    for p in (f32_path, q_path, art_dir / "manifest.json"):
+    for p in (f32_path, dyn_path, q_path, art_dir / "manifest.json"):
         print(f"  {p}  ({p.stat().st_size / 1e6:.1f} MB)")
 
 

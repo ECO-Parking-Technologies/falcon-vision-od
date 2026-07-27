@@ -1,8 +1,18 @@
-# 03 — int8 TFLite Export Pipeline (toolchain DONE 2026-07-27; device verification pending)
+# 03 — TFLite Export Pipeline (toolchain DONE 2026-07-27; device verification pending)
 
-Goal: `model_best.pth.tar` → **full-int8 TFLite** that is a drop-in for the firmware's current model on all three hardware tiers.
+Goal: `model_best.pth.tar` → TFLite artifacts that can replace the firmware's current model on all three hardware tiers.
 
-## Baseline model contract (measured from `efficientdet_lite2.tflite`)
+**Three TFLite artifacts per run** (the sensor's current TFLite runtime is too old for new-style full-int8, so all three are always produced):
+
+| artifact | quant | runs on | size (lite0) | desktop 1-thread |
+|---|---|---|---|---|
+| `model.f32.tflite` | none | any runtime | 13.6 MB | 26 ms |
+| `model.dynamic.tflite` | int8 weights, f32 activations | old runtimes incl. current sensor lib | 4.2 MB | 48 ms |
+| `model.int8.tflite` | full static int8 | modern LiteRT; required for i.MX NPUs | 4.6 MB | 32 ms |
+
+Op-compat: our exports only add PADV2 / RELU6 / SUM / TRANSPOSE beyond the production baseline's op set (all long-supported); each manifest records the exact op list for FW review.
+
+## Baseline model contract (measured from `efficientdet_lite2.tflite` — the off-the-shelf model running in production today)
 
 - Input: `[1,448,448,3]` **uint8**, quant `(scale=1/128, zero_point=127)` → effectively `(x-127)/128`.
 - Body: full-int8, post-processing via **`TFLite_Detection_PostProcess` custom op**.
@@ -16,6 +26,8 @@ Goal: `model_best.pth.tar` → **full-int8 TFLite** that is a drop-in for the fi
   - **Full-int8 static PTQ via ai-edge-quantizer** (`static_wi8_ai8` recipe) calibrated on 64 real garage images with training-time preprocessing. (The litert-torch PT2E path hit a converter layout-pass bug; quantizing the float flatbuffer with ai-edge-quantizer is the robust route.)
   - Built-in parity checks. Current lite0 numbers: float p99 score Δ=0.0004; int8 p99 score Δ=0.0026, top-20 anchor overlap 15/20, top-100 box Δ≤0.08.
 - [x] Desktop x86 single-thread sanity benchmark: our int8 lite0@320 **32 ms** vs baseline lite2@448 **97 ms** (~3×); int8 model 4.6 MB vs 7.6 MB. (ARM/NPU numbers are what actually matter — below.)
+- [x] Dynamic-range artifact (`dynamic_wi8_afp32`) for the current old sensor runtime; parity on par with f32 (p99 score Δ=0.0004).
+- [x] Versioned artifact layout `artifacts/<model>/<run>/` + `latest` symlink + `manifest.json` (provenance, contract, quant recipe, op list, parity, git commit).
 
 ## Remaining
 
