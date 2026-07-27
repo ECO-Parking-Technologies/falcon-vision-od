@@ -11,7 +11,7 @@ def extract_sensor_and_camera(filename):
     return sensor, camera
 
 
-def convert_detections(detections, label_map, allowed_labels, threshold=0.25):
+def convert_detections(detections, label_map, allowed_labels, threshold):
     converted = []
 
     if isinstance(detections, list) and len(detections) == 1:

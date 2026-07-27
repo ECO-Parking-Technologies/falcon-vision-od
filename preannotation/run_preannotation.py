@@ -47,10 +47,16 @@ def run_inference_on_sensor(
     threshold,
     visualize=None,
     crop_cfg=None,
+    pretrained_coco=False,
 ):
-    # build a new→orig ID map for remapping
-    _, id_map = remap_label_map(label_map)
-    inv_id_map = {new: orig for orig, new in id_map.items()}
+    # Model detections carry 1-based class ids (background = 0), which for
+    # custom models match the 1-based contiguous ids from remap_label_map.
+    # Pretrained COCO-90 models already emit original COCO category ids.
+    if pretrained_coco:
+        inv_id_map = None
+    else:
+        _, id_map = remap_label_map(label_map)
+        inv_id_map = {new: orig for orig, new in id_map.items()}
     total_time = 0.0
     img_count = 0
 
@@ -96,7 +102,7 @@ def run_inference_on_sensor(
         )
 
         # 5) Remap the model’s class IDs back to your original COCO IDs
-        if raw_dets.size:
+        if inv_id_map is not None and raw_dets.size:
             rem = raw_dets.copy()
             for i in range(rem.shape[0]):
                 rem[i, 5] = inv_id_map.get(int(rem[i, 5]), -1)
@@ -201,9 +207,9 @@ def main():
         if not model_path.exists():
             sys.exit(f"❌ model_file not found: {model_file_cfg}")
 
-        # use your custom class count (allowed_labels + background)
-        allowed_labels = cfg.get("allowed_labels", list(load_label_map().keys()))
-        num_classes = len(allowed_labels) + 1
+        # class count must match the trained model: all classes in the label map
+        # (allowed_labels only filters the export, it does not change the model)
+        num_classes = len(load_label_map())
         print(
             f"[INFO] Using custom model '{model_path.name}', num_classes={num_classes}"
         )
@@ -252,6 +258,7 @@ def main():
                     threshold,
                     visualize=args.visualize,
                     crop_cfg=cfg.get("crop", None),
+                    pretrained_coco=use_pretrained,
                 )
 
                 if args.dry_run:

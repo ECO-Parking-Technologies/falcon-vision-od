@@ -12,8 +12,8 @@
 
 ## Remaining
 
-- [ ] **Commit the pending working-tree changes** (cleanup touched tracked files; review diff first).
-- [ ] Decide fate of the uncommitted `effdet/config/model_config.py` mnv4 additions — harmless to keep; commit or drop.
+- [x] **Commit the pending working-tree changes** — committed as three logical commits (mnv4/WIP features, ExecuTorch removal + cleanup, docs + README) on 2026-07-27.
+- [x] `effdet/config/model_config.py` mnv4 additions — kept and committed.
 - [ ] `effdet.egg-info/` left in place to avoid disturbing a possible editable install; remove on next venv rebuild.
 - [ ] **Repo restructure** (after the TFLite export path proves out, before large-scale data lands):
   - Separate our code from vendored upstream: e.g. `falcon/` (or `tools/`) containing `training/`, `preannotation/`, `export/`, `eval/`, `portal/`, with `configs/` at top level; leave `effdet/` as the library.

@@ -54,6 +54,9 @@ def main():
     raw = torch.load(ckpt, map_location="cpu", weights_only=False)
     sd = raw.get("state_dict", raw)
 
+    # create_model(bench_task="predict") returns a DetBenchPredict; training
+    # checkpoints are bench-level ("model."-prefixed) — normalize keys to the
+    # raw network and load strictly into bench.model so mistakes are loud.
     base = create_model(
         model_name,
         bench_task="predict",
@@ -61,10 +64,13 @@ def main():
         pretrained_backbone=False,
         pretrained=False,
     )
-    sd = {k.replace("model.", ""): v for k, v in sd.items()}
-    missing, unexpected = base.load_state_dict(sd, strict=False)
-    if missing or unexpected:
-        print(f"[WARN] load_state_dict: missing={missing}, unexpected={unexpected}")
+    sd = {(k[len("module."):] if k.startswith("module.") else k): v for k, v in sd.items()}
+    sd = {(k[len("model."):] if k.startswith("model.") else k): v for k, v in sd.items()}
+    missing, unexpected = base.model.load_state_dict(sd, strict=False)
+    if missing:
+        sys.exit(f"checkpoint is missing {len(missing)} network keys (e.g. {missing[:3]})")
+    if unexpected:
+        print(f"[INFO] ignored {len(unexpected)} non-network checkpoint keys (e.g. {unexpected[:3]})")
     base.eval()
 
     dummy = torch.randn(1, 3, H, W)

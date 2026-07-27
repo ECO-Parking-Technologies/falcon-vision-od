@@ -187,7 +187,7 @@ def merge_and_split_datasets(config):
         images = coco["images"]
         annotations = coco["annotations"]
         random.shuffle(images)
-        split_idx = int(len(images) * config.get("train_split", 0.8))
+        split_idx = int(len(images) * config.get("train_val_split", 0.8))
         train_imgs = images[:split_idx]
         val_imgs = images[split_idx:]
 

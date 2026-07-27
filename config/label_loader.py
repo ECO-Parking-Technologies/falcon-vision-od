@@ -24,13 +24,18 @@ def load_label_map(config_path=None):
 def remap_label_map(orig_label_map: dict) -> tuple[dict[int, str], dict[int, int]]:
     """
     Given an original mapping {orig_id: class_name}, return:
-      - new_label_map: {new_id: class_name}  # new_id runs 0..N-1
+      - new_label_map: {new_id: class_name}  # new_id runs 1..N
       - id_map:         {orig_id: new_id}     # to translate annotations
+
+    New ids are 1-based because effdet's COCO parser uses category ids
+    directly as training labels with 0 reserved for background
+    (parser_coco.py cat_ids_as_labels) — a 0-based id would make that
+    class untrainable.
     """
     # sort original IDs to give a stable new ordering
     sorted_orig = sorted(orig_label_map.keys())
-    # build orig->new map
-    id_map = {orig: new for new, orig in enumerate(sorted_orig)}
+    # build orig->new map (1-based; 0 is background)
+    id_map = {orig: new + 1 for new, orig in enumerate(sorted_orig)}
     # build new new_id->name map
     new_label_map = {new: orig_label_map[orig] for orig, new in id_map.items()}
     return new_label_map, id_map
