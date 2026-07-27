@@ -53,9 +53,11 @@ Few images per sensor per time window, spread wide:
 
 ## Build tasks
 
-- [ ] Regenerate portal API reference via live GraphQL introspection.
-- [ ] `portal/` module: RAM-only credential prompts, OAuth refresh handling, org→site→sensor discovery, gateway resolution.
-- [ ] Unified puller (sources A + B) with manifest-gated download-once, sha256 + perceptual-hash dedup, politeness (timeouts, retry/backoff, modest concurrency — the reference scripts have none).
-- [ ] Sampling layer (per-sensor caps, time-bucket spread) → images land in the unified layout ready for preannotation → CVAT.
+- [x] Copy reference implementations into `portal/reference/` (downloader + yml, cloudflare_auth, PortalAPIClient/SensorImageFetcher extracted from the viewer). Delete once the puller is proven.
+- [x] **`portal/pull_training_images.py`** (first version, untested against live API): RAM-only credential prompts, OAuth refresh, org→site discovery, gateway derivation with graceful skip, sources A + B, SQLite manifest download-once, sha256 dedup, timeouts + retry/backoff, interval sampling + per-sensor/per-site caps, `--list-garages` mode.
+- [ ] **First live run** (needs pasted tokens): `--list-garages`, then a small bounded pull; fix whatever reality disagrees with (esp. the source-A file-listing JSON shape and validation query field names vs the live schema).
+- [ ] Regenerate portal API reference via live GraphQL introspection (same session as the first run).
+- [ ] Perceptual-hash near-duplicate filtering before the annotation queue (sha256 exact-dedup is in).
+- [ ] Wire pulled layout into preannotation/training (thin split step or config path update).
 
 *Parked (not current focus):* `snapshotParkingSpace.bounds` spot polygons and the human occupancy labels in validations remain available for the track-06 evaluator whenever spot-level evaluation becomes relevant.

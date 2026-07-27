@@ -1,0 +1,41 @@
+# YAML Configuration for Falcon Vision Sensor Training Image Download
+# Updated to use Cloudflare Access instead of SSH/fabric
+
+# Cloudflare Access credentials
+# IMPORTANT: Do NOT store credentials in this file!
+# Credentials will be prompted at runtime or read from environment variables:
+#   - CF_ACCESS_CLIENT_ID
+#   - CF_ACCESS_CLIENT_SECRET
+
+# Falcon Vision Sensor settings
+falcon-vision-sensor:
+  training-images-path: '/media/sdcard/images/training'
+
+# Download settings
+download:
+  timeout_s: 60
+  # output_path: If not specified, defaults to 'artifacts' directory next to the script
+  # Output structure: {output_path}/{garage_name}/training_images/{sensor_hostname}/
+  # This matches the data_pipeline/dnn/artifacts structure used by training
+
+# Garages to download from
+garages:
+  yaamava-north:
+    # Gateway URL (Cloudflare Access protected)
+    gateway_url: "https://legacy.fvg-yaamava-north.private.ecofalcondata.com"
+    # Human-readable display name
+    display_name: "Yaamava North Garage"
+    # Time range for image collection (format: YYYYMMDDHHmm, UTC timezone)
+    # Last 3 days from Jan 16, 2026 19:20 UTC
+    start-time: '202601131920'  # Jan 13, 2026 19:20 UTC
+    end-time: '202601161920'    # Jan 16, 2026 19:20 UTC
+    # Interval between images in minutes (0 = all images)
+    # Option 1 (Recommended): 60 minutes = hourly sampling (~12,096 images for 84 sensors, 3 days)
+    # Option 2 (Aggressive): 10 minutes = 10-min sampling (~72,576 images)
+    # Option 3 (Conservative): 120 minutes = 2-hour sampling (~6,048 images)
+    interval: 60  # Hourly sampling (Option 1)
+    # Camera filter: 0 = all cameras, 1 = camera-1 only, 2 = camera-2 only
+    cameras: 0
+    # Sensors: Use ['*'] to automatically enumerate all sensors, or list specific sensors
+    # Handicap spaces only (84 sensors total - or use '*' to get all sensors)
+    sensors: ['*']  # Wildcard: automatically gets all sensors from gateway
