@@ -319,6 +319,7 @@ def backfill_legacy(legacy_root: Path, data_root: Path, manifest: "Manifest"):
         stats["new"] += 1
         if stats["new"] % 500 == 0:
             log.info("backfill progress: %s", stats)
+            check_disk(data_root, MIN_FREE_GB_DEFAULT)
     return stats
 
 
@@ -391,6 +392,25 @@ def pull_source_a(cf, manifest, data_root, garage, gateway, start, end, interval
                 if max_per_sensor and kept >= max_per_sensor:
                     break
     return pulled
+
+
+MIN_FREE_GB_DEFAULT = 50
+
+
+def free_gb(path):
+    import shutil
+    return shutil.disk_usage(path).free / 1e9
+
+
+def check_disk(data_root, min_free_gb):
+    """Abort the pull gracefully before the disk gets tight."""
+    g = free_gb(data_root)
+    if g < min_free_gb:
+        log.error("disk guard: only %.1f GB free (< %.0f GB floor) — stopping", g, min_free_gb)
+        raise SystemExit(
+            f"disk guard: {g:.1f} GB free on the store volume is below the "
+            f"{min_free_gb:.0f} GB floor — pull stopped cleanly (resume any time "
+            f"after freeing space, or lower --min-free-gb)")
 
 
 def slugify(name):
@@ -472,6 +492,7 @@ def pull_source_b(portal, manifest, data_root, site, runs, notify, pos=""):
     garage = site["slug"]
     pulled = 0
     for j, run in enumerate(runs, 1):
+        check_disk(data_root, pull_source_b.min_free_gb)
         ts = run.get("runAt") or ""
         notify(garage, "•", None, f"{pos}{garage} · run {j}/{len(runs)} · {ts[:16]}")
         try:
@@ -519,6 +540,9 @@ def main():
                     help="cap images per sensor per run, 0 = no cap (source a)")
     ap.add_argument("--runs-per-garage", type=int, default=12,
                     help="diverse snapshot runs to pull per garage (source b)")
+    ap.add_argument("--min-free-gb", type=float, default=MIN_FREE_GB_DEFAULT,
+                    help="stop pulling when the store volume's free space drops "
+                         f"below this many GB (default {MIN_FREE_GB_DEFAULT})")
     ap.add_argument("--plan-only", action="store_true",
                     help="source b: build + save the diverse run selection, download nothing")
     ap.add_argument("--garages", help="comma-separated site-name filter (default: all)")
@@ -584,6 +608,10 @@ def main():
         )
 
     manifest = Manifest(args.data_root / "manifest.sqlite")
+    pull_source_b.min_free_gb = args.min_free_gb
+    check_disk(args.data_root, args.min_free_gb)
+    console.print(f"disk guard: {free_gb(args.data_root):.0f} GB free, "
+                  f"floor {args.min_free_gb:.0f} GB")
     stats = PullStats()
     total = 0
 
