@@ -418,8 +418,8 @@ def pull_source_b(portal, manifest, data_root, site, max_per_site, notify):
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--data-root", type=Path,
-                    default=Path("/media/lopezemi/Expansion/falcon-vision-od-data"))
+    ap.add_argument("--data-root", type=Path, default=Path("data"),
+                    help="training-image store (default: repo-local 'data' symlink)")
     ap.add_argument("--backfill", type=Path, metavar="LEGACY_ROOT",
                     help="import existing <garage>/training_images/<sensor>/*.png into the "
                          "store (hardlink + manifest register, no network), then exit")

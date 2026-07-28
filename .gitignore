@@ -148,3 +148,5 @@ experiments/
 
 # downloaded checkpoints
 weights/
+# machine-local symlink to the training-image store
+data
