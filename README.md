@@ -42,6 +42,19 @@ Note: `setup_venv.sh` deletes and recreates the venv each run.
 
 ---
 
+## Training Images (preliminary step)
+
+Pull diverse snapshot images from every garage via the ECO Parking portal
+(garages auto-discovered; credentials prompted, kept in RAM only; already-pulled
+images are never downloaded twice):
+
+```bash
+python3 portal/pull_training_images.py --source b
+```
+
+Images land in `data/images/<garage>/<sensor>/…` with a manifest. See
+[portal/README.md](portal/README.md) for options.
+
 ## Preannotation
 
 Runs a model over garage images and writes COCO 1.0 annotation files per sensor for CVAT import:
