@@ -21,9 +21,9 @@ See [docs/road-map/](docs/road-map/) for the full research roadmap (model select
 ## Pipeline Overview
 
 ```
-Portal images → Preannotation → CVAT (annotate/correct) → COCO export
-      → Training (garage data + filtered MS-COCO) → Checkpoint
-      → Export (int8 TFLite) → Sensor firmware
+Portal snapshot pull (all garages) → Preannotation → CVAT (human confirm)
+      → COCO export → Training → Checkpoint
+      → Auto-export (TFLite variants + drop-in package) → Sensor firmware (file swap)
 ```
 
 - **Classes** ([config/label_map.yaml](config/label_map.yaml)): person, bicycle, car, motorcycle, bus, truck (COCO ids, remapped to contiguous ids for training).
