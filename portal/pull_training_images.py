@@ -61,6 +61,8 @@ class PullStats:
     def __init__(self):
         self.rows = {}
         self.current = ""
+        self.progress = {}   # garage -> (runs_done, runs_planned)
+        self.data_root = None
 
     def bump(self, garage, sensor, event):
         row = self.rows.setdefault((garage, sensor), dict.fromkeys(self.EVENTS, 0))
@@ -68,19 +70,27 @@ class PullStats:
 
     def table(self):
         t = Table(title="Training image pull (one row per garage)", box=box.SIMPLE_HEAD)
-        for col, style in (("garage", "cyan"), ("sensor", "cyan"), ("new", "green"),
+        for col, style in (("garage", "cyan"), ("progress", "cyan"), ("new", "green"),
                            ("dup", "yellow"), ("cached", "dim"), ("errors", "red")):
-            t.add_column(col, style=style, justify="right" if col not in ("garage", "sensor") else "left")
+            t.add_column(col, style=style, justify="left" if col == "garage" else "right")
         totals = dict.fromkeys(self.EVENTS, 0)
         for (g, s), r in sorted(self.rows.items()):
-            t.add_row(g, s, *(str(r[e]) for e in self.EVENTS))
+            d, n = self.progress.get(g, (0, 0))
+            prog = f"{d}/{n} ({100 * d // n}%)" if n else (s if s != "•" else "-")
+            t.add_row(g, prog, *(str(r[e]) for e in self.EVENTS))
             for e in self.EVENTS:
                 totals[e] += r[e]
+        done = sum(d for d, _ in self.progress.values())
+        planned = sum(n for _, n in self.progress.values())
         if self.rows:
             t.add_section()
-            t.add_row("total", f"{len(self.rows)} sensors", *(str(totals[e]) for e in self.EVENTS))
-        if self.current:
-            t.caption = self.current
+            overall = f"{done}/{planned} ({100 * done // planned}%)" if planned else "-"
+            t.add_row("OVERALL", overall, *(str(totals[e]) for e in self.EVENTS))
+        cap = self.current or ""
+        if self.data_root is not None:
+            cap += f"   ·   disk free {free_gb(self.data_root):.0f} GB"
+        if cap:
+            t.caption = cap
         return t
 
 PORTAL_GRAPHQL = "https://api.ecoparkingtechnologies.com/graphql"
@@ -504,7 +514,8 @@ def pull_source_b(portal, manifest, data_root, site, runs, notify, pos=""):
     for j, run in enumerate(runs, 1):
         check_disk(data_root, pull_source_b.min_free_gb)
         ts = run.get("runAt") or ""
-        notify(garage, "•", None, f"{pos}{garage} · run {j}/{len(runs)} · {ts[:16]}")
+        notify(garage, "•", None, f"{pos}{garage} · run {j}/{len(runs)} · {ts[:16]}",
+               progress=(j - 1, len(runs)))
         try:
             frames = snapshot_frames(portal, run["id"])
         except Exception as e:
@@ -529,6 +540,7 @@ def pull_source_b(portal, manifest, data_root, site, runs, notify, pos=""):
                               garage, fr["sensor"], ts)
             notify(garage, "•", "new" if new else "dup")
             pulled += 1
+    notify(garage, "•", None, progress=(len(runs), len(runs)))
     return pulled
 
 
@@ -623,14 +635,23 @@ def main():
     console.print(f"disk guard: {free_gb(args.data_root):.0f} GB free, "
                   f"floor {args.min_free_gb:.0f} GB")
     stats = PullStats()
+    stats.data_root = args.data_root
+    prior_plan = args.data_root / "snapshot_plan.json"
+    if prior_plan.exists():  # seed totals so overall % is against the full plan
+        import json as _j
+        for slug, p in _j.loads(prior_plan.read_text()).items():
+            if p.get("runs"):
+                stats.progress[slug] = (0, len(p["runs"]))
     total = 0
 
     with Live(stats.table(), console=console, refresh_per_second=4) as live:
-        def notify(garage, sensor, event, current=None):
+        def notify(garage, sensor, event, current=None, progress=None):
             if event:
                 stats.bump(garage, sensor, event)
             if current is not None:
                 stats.current = current
+            if progress is not None:
+                stats.progress[garage] = progress
             live.update(stats.table())
 
         if args.source in ("a", "both"):
