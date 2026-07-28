@@ -137,18 +137,33 @@ class PortalClient:
         self._expiry = time.time() + data.get("expires_in", 1200)
         return self._access_token
 
+    MIN_INTERVAL = 0.4  # seconds between requests — stay under the portal rate limit
+    _last_request = 0.0
+
     def graphql(self, query: str, variables: dict = None) -> dict:
-        r = self.session.post(
-            PORTAL_GRAPHQL,
-            json={"query": query, "variables": variables or {}},
-            headers={"Authorization": f"Bearer {self._token()}"},
-            timeout=TIMEOUT,
-        )
-        r.raise_for_status()
-        out = r.json()
-        if out.get("errors"):
-            raise RuntimeError(f"GraphQL errors: {out['errors']}")
-        return out["data"]
+        for attempt in range(6):
+            wait = PortalClient.MIN_INTERVAL - (time.time() - PortalClient._last_request)
+            if wait > 0:
+                time.sleep(wait)
+            PortalClient._last_request = time.time()
+            r = self.session.post(
+                PORTAL_GRAPHQL,
+                json={"query": query, "variables": variables or {}},
+                headers={"Authorization": f"Bearer {self._token()}"},
+                timeout=TIMEOUT,
+            )
+            if r.status_code == 429:
+                delay = float(r.headers.get("Retry-After") or min(30, 2 ** (attempt + 1)))
+                log.info("rate limited (429), backing off %.0fs", delay)
+                time.sleep(delay)
+                continue
+            r.raise_for_status()
+            out = r.json()
+            log.debug("graphql response (%s...): %.500s", query[:60].replace("\n", " "), out)
+            if out.get("errors"):
+                raise RuntimeError(f"GraphQL errors: {out['errors']}")
+            return out["data"]
+        raise RuntimeError("still rate-limited after 6 attempts")
 
     def discover_sites(self):
         """[{org, site_id, name, display}] for all non-deleted orgs/sites."""

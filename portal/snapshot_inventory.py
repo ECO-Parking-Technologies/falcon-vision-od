@@ -52,23 +52,26 @@ def pick_ts_field(info):
 def site_row(stats, key):
     s = stats[key]
     rng = f"{s['oldest'][:10]}→{s['newest'][:10]}" if s["oldest"] else "—"
-    return (s["org"], s["garage"], str(s["snapshots"]), rng, str(s["validations"]))
+    err = "[red]ERR[/red]" if s["errors"] else str(s["snapshots"])
+    return (s["org"], s["garage"], err, f"{s['avg_images_per_run']:.0f}",
+            str(s["images_est"]), rng, str(s["validations"]))
 
 
 def build_table(stats, done, total):
     t = Table(title=f"Portal snapshot inventory ({done}/{total} sites scanned)",
               box=box.SIMPLE_HEAD)
-    for col in ("account", "garage", "snapshots", "date range", "validations"):
+    for col in ("account", "garage", "runs", "img/run", "est. images", "date range",
+                "validations"):
         t.add_column(col, justify="right" if col not in ("account", "garage") else "left")
-    tot = dict(snapshots=0, validations=0)
+    tot = dict(snapshots=0, images_est=0, validations=0)
     for key in sorted(stats):
         t.add_row(*site_row(stats, key))
-        tot["snapshots"] += stats[key]["snapshots"]
-        tot["validations"] += stats[key]["validations"]
+        for f in tot:
+            tot[f] += stats[key][f]
     if stats:
         t.add_section()
         t.add_row("TOTAL", f"{len(stats)} garages", str(tot["snapshots"]), "",
-                  str(tot["validations"]))
+                  str(tot["images_est"]), "", str(tot["validations"]))
     return t
 
 
@@ -120,22 +123,33 @@ def main():
     log.info("using ts_field=%s orderBy=%s/%s", ts_field, asc, desc)
 
     def snapshot_stats(site_id):
-        n = portal.graphql(
-            "query($id: Int!) { snapshots(condition: {siteId: $id}) { totalCount } }",
-            {"id": site_id})["snapshots"]["totalCount"]
-        oldest = newest = ""
-        if n and ts_field and asc:
-            for order, slot in ((asc, "oldest"), (desc, "newest")):
-                r = portal.graphql(
-                    f"query($id: Int!) {{ snapshots(condition: {{siteId: $id}}, "
-                    f"orderBy: {order}, first: 1) {{ nodes {{ {ts_field} }} }} }}",
-                    {"id": site_id})["snapshots"]["nodes"]
-                if r:
-                    if slot == "oldest":
-                        oldest = r[0][ts_field] or ""
-                    else:
-                        newest = r[0][ts_field] or ""
-        return n, oldest, newest
+        """Sample the newest 50 runs for an images-per-run average; estimate the total.
+
+        runs × avg(images/run of recent runs) ≈ images available. One combined
+        request per site + one tiny query for the oldest-run date.
+        """
+        order = f", orderBy: {desc}" if desc else ""
+        ts = ts_field or "id"
+        data = portal.graphql(
+            f"query($id: Int!) {{"
+            f" snapshots(condition: {{siteId: $id}}{order}, first: 50) {{ totalCount"
+            f"  nodes {{ {ts} snapshotParkingSpaces {{ totalCount }} }} }}"
+            f" validations(condition: {{siteId: $id}}) {{ totalCount }} }}",
+            {"id": site_id})
+        snaps = data["snapshots"]
+        runs = snaps["totalCount"]
+        sampled = [n["snapshotParkingSpaces"]["totalCount"] for n in snaps["nodes"]]
+        avg = (sum(sampled) / len(sampled)) if sampled else 0.0
+        newest = max((n[ts] for n in snaps["nodes"] if n.get(ts)), default="")
+        oldest = ""
+        if runs and asc:
+            r = portal.graphql(
+                f"query($id: Int!) {{ snapshots(condition: {{siteId: $id}}, "
+                f"orderBy: {asc}, first: 1) {{ nodes {{ {ts} }} }} }}",
+                {"id": site_id})["snapshots"]["nodes"]
+            oldest = r[0][ts] if r else ""
+        return (runs, avg, round(runs * avg), oldest or "", newest,
+                data["validations"]["totalCount"])
 
     stats = {}
     with Live(build_table(stats, 0, len(sites)), console=console,
@@ -144,35 +158,37 @@ def main():
             key = f"{site['org']}/{site['display']}"
             s = stats[key] = {"org": site["org"], "garage": site["display"],
                               "site_id": site["site_id"], "snapshots": 0,
+                              "avg_images_per_run": 0.0, "images_est": 0,
                               "validations": 0, "oldest": "", "newest": "",
                               "errors": 0}
             try:
-                s["snapshots"], s["oldest"], s["newest"] = snapshot_stats(site["site_id"])
+                (s["snapshots"], s["avg_images_per_run"], s["images_est"], s["oldest"],
+                 s["newest"], s["validations"]) = snapshot_stats(site["site_id"])
             except Exception as e:
-                log.warning("%s: snapshots query failed: %s", key, e)
+                log.warning("%s: snapshots query FAILED: %s", key, e)
                 s["errors"] += 1
-            try:
-                s["validations"] = portal.graphql(
-                    "query($id: Int!) { validations(condition: {siteId: $id}) { totalCount } }",
-                    {"id": site["site_id"]})["validations"]["totalCount"]
-            except Exception as e:
-                log.debug("%s: validations count failed: %s", key, e)
-            log.info("%s: snapshots=%d range=%s..%s validations=%d",
-                     key, s["snapshots"], s["oldest"], s["newest"], s["validations"])
+            log.info("%s: runs=%d avg_img/run=%.1f est_images=%d range=%s..%s "
+                     "validations=%d errors=%d", key, s["snapshots"],
+                     s["avg_images_per_run"], s["images_est"], s["oldest"],
+                     s["newest"], s["validations"], s["errors"])
             live.update(build_table(stats, i + 1, len(sites)))
 
     totals = {
         "garages": len(stats),
         "garages_with_snapshots": sum(1 for v in stats.values() if v["snapshots"]),
-        "snapshots": sum(v["snapshots"] for v in stats.values()),
+        "garages_errored": sum(1 for v in stats.values() if v["errors"]),
+        "snapshot_runs": sum(v["snapshots"] for v in stats.values()),
+        "images_est": sum(v["images_est"] for v in stats.values()),
         "validations": sum(v["validations"] for v in stats.values()),
     }
     json_file.write_text(json.dumps({"generated": stamp, "totals": totals,
                                      "introspection": info, "sites": stats}, indent=2))
     log.info("totals: %s", totals)
     console.print(Panel(
-        f"garages: {totals['garages']} ({totals['garages_with_snapshots']} with snapshots)\n"
-        f"total snapshots: [green]{totals['snapshots']}[/green] · validations: {totals['validations']}\n"
+        f"garages: {totals['garages']} ({totals['garages_with_snapshots']} with snapshots, "
+        f"{totals['garages_errored']} errored)\n"
+        f"snapshot runs: {totals['snapshot_runs']} · est. images: [green]{totals['images_est']}[/green] · "
+        f"validations: {totals['validations']}\n"
         f"summary JSON: {json_file}", title="Overview", border_style="green"))
 
 
