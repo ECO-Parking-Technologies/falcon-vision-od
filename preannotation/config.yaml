@@ -11,7 +11,7 @@ pretrained_backbone: True
 base_data_path: data/images   # the unified store (portal-canonical garages)
 
 garages:
-  - civic-square
+  - carmel-civic-square-civic-square
 
 threshold: 0.25   # gdino garage frames score 0.25-0.45
 
