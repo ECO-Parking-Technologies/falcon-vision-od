@@ -22,13 +22,16 @@ def convert_detections_to_coco(
     image_id = 1
     file_to_id = {}
 
-    for fname in sorted(os.listdir(image_dir)):
-        if not fname.lower().endswith((".jpg", ".png")):
-            continue
-        # ✅ Add the garage name prefix to the file path
-        rel_path = os.path.join(
-            garage_name, "training_images", os.path.basename(image_dir), fname
-        )
+    from pathlib import Path as _P
+    sensor_dir = _P(image_dir)
+    # legacy layout keeps 'training_images' in the CVAT-visible path; the
+    # store layout is <garage>/<sensor>/<YYYY>/<MM>/<file>
+    legacy = sensor_dir.parent.name == "training_images"
+    prefix = os.path.join(garage_name, "training_images") if legacy else garage_name
+    files = sorted(str(p.relative_to(sensor_dir)) for p in sensor_dir.rglob("*")
+                   if p.suffix.lower() in (".jpg", ".jpeg", ".png"))
+    for fname in files:
+        rel_path = os.path.join(prefix, sensor_dir.name, fname)
         file_to_id[fname] = image_id
         images.append(
             {

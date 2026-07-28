@@ -1,14 +1,19 @@
 use_pretrained_model: False
-model_type: tf_efficientdet_lite0
+model_type: grounding_dino   # open-vocab preannotation backend (or tf_efficientdet_lite0)
+
+grounding_dino:
+  model_id: IDEA-Research/grounding-dino-base
+  box_threshold: 0.25
+  text_threshold: 0.20
 model_file: experiments/falcon-vision-effdet/artifacts/tf_efficientdet_lite0/latest
 pretrained_backbone: True
 
-base_data_path: /media/lopezemi/Expansion/falcon-vision-ml/artifacts/data_pipeline
+base_data_path: data/images   # the unified store (portal-canonical garages)
 
 garages:
-  - amazon
+  - civic-square
 
-threshold: 0.3
+threshold: 0.25   # gdino garage frames score 0.25-0.45
 
 allowed_labels: # see config/label_map.yaml
   - 1   # person
@@ -24,6 +29,9 @@ allowed_labels: # see config/label_map.yaml
 #   height: 480
 
 efficientdet_models:
+
+  grounding_dino:
+    input_size: [640, 640]
 
   tf_efficientdet_lite0:
     input_size: [320, 320]

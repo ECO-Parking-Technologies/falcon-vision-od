@@ -60,7 +60,11 @@ def run_inference_on_sensor(
     total_time = 0.0
     img_count = 0
 
-    images = sorted(f for f in os.listdir(sensor_path) if f.lower().endswith(".png"))
+    # recursive: supports both the legacy flat layout and the store's
+    # <sensor>/<YYYY>/<MM>/ nesting; jpg + png
+    images = sorted(
+        str(p.relative_to(sensor_path)) for p in Path(sensor_path).rglob("*")
+        if p.suffix.lower() in (".png", ".jpg", ".jpeg"))
     all_detections = []
 
     for image_file in images:
@@ -188,7 +192,9 @@ def main():
     input_w, input_h = cfg["efficientdet_models"][model_type]["input_size"]
 
     # decide where to get weights from
-    if use_pretrained:
+    if model_type == "grounding_dino":
+        pass  # open-vocabulary backend, no local weights file
+    elif use_pretrained:
         model_url = cfg["efficientdet_models"][model_type].get("url")
         if not model_url:
             sys.exit(f"❌ No URL specified for pretrained model of type '{model_type}'")
@@ -214,7 +220,11 @@ def main():
             f"[INFO] Using custom model '{model_path.name}', num_classes={num_classes}"
         )
 
-    print(f"[INFO] Using model path: {model_path}")
+    if model_type == "grounding_dino":
+        num_classes = None
+        print("[INFO] Using Grounding DINO (open-vocabulary, HF transformers)")
+    else:
+        print(f"[INFO] Using model path: {model_path}")
 
     # load label map & pick your classes
     label_map = load_label_map()
@@ -229,16 +239,27 @@ def main():
     export_cvat_labels(label_map, labels_output_path)
 
     # build the model
-    model = EfficientDetModel(
-        model_path=str(model_path),
-        model_name=model_type,
-        num_classes=num_classes,
-        pretrained_backbone=cfg.get("pretrained_backbone", True),
-    )
+    if model_type == "grounding_dino":
+        from grounding_dino_model import GroundingDinoModel
+        g = cfg.get("grounding_dino", {})
+        model = GroundingDinoModel(
+            model_id=g.get("model_id", "IDEA-Research/grounding-dino-base"),
+            box_threshold=g.get("box_threshold", 0.25),
+            text_threshold=g.get("text_threshold", 0.20),
+        )
+    else:
+        model = EfficientDetModel(
+            model_path=str(model_path),
+            model_name=model_type,
+            num_classes=num_classes,
+            pretrained_backbone=cfg.get("pretrained_backbone", True),
+        )
 
     # iterate garages/sensors
     for garage in cfg["garages"]:
         garage_dir = Path(cfg["base_data_path"]) / garage / "training_images"
+        if not garage_dir.exists():  # store layout: sensors directly under garage
+            garage_dir = Path(cfg["base_data_path"]) / garage
         if not garage_dir.exists():
             continue
 
@@ -258,7 +279,7 @@ def main():
                     threshold,
                     visualize=args.visualize,
                     crop_cfg=cfg.get("crop", None),
-                    pretrained_coco=use_pretrained,
+                    pretrained_coco=use_pretrained or model_type == "grounding_dino",
                 )
 
                 if args.dry_run:
