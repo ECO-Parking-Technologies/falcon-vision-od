@@ -51,12 +51,37 @@ Few images per sensor per time window, spread wide:
 - Spread across time-of-day buckets and calendar days; prefer occupancy-change moments over static repeats; perceptual-hash out the near-identical frames.
 - The cap + manifest make repeated runs incremental: each run tops up new time windows only.
 
-## Agreed structure (decided 2026-07-28)
+## Agreed structure — v2, CLEAN SLATE (locked 2026-07-28, supersedes v1)
 
-- **Data root: `/media/lopezemi/Expansion/falcon-vision-od-data`** (new, owned by this repo's tooling; the puller's `--data-root` default). Layout `images/<garage>/<sensor>/<YYYY>/<MM>/<file>` + `manifest.sqlite` + `pull.log`.
-- **Existing arlington/wpb_banyan/amazon data backfilled** via `pull_training_images.py --backfill <legacy_root>`: hardlinked into the store and registered under the same `(sensor, filename)` keys the live puller checks — history counts toward download-once, sha256 dedup spans old+new. Legacy dirs become read-only history.
-- **Sampling default: hourly** (`--interval-min 60`, ≈24 img/sensor/day), breadth-first across all portal-discovered garages.
-- Training-wrapper adapter (point its glob at the new layout) lands together with the first annotation round on pulled data.
+Decisions: previous annotations are retired (fresh CVAT project with the full attribute spec);
+the store holds **only curated images, as real copies** (no hardlinks); **garage identity comes
+from the portal**, and ordering follows from that.
+
+- **Data root**: `/media/lopezemi/Expansion/falcon-vision-od-data` via the repo-local `data`
+  symlink. Layout `images/<garage>/<sensor>/<YYYY>/<MM>/<file>` + `manifest.sqlite` + logs.
+- **Canonical garage names = portal site names.** Discovery writes a `garages` table to the
+  manifest (site_id, org, name, display); every image row references it. Legacy dir names map
+  to portal names via an explicit mapping (e.g. `wpb_banyan → West Palm Beach/Banyan`,
+  `yaamava-north → Yaamava'/North Garage`, `amazon → Amazon/AMAZON KCVG AirHub`,
+  `arlington → Arlington Heights/Vail Avenue Garage`, `switch → City of Fishers/Switch Garage`,
+  `carmel_* → Carmel/*`, `google*` → Google Alta — ambiguous ones confirmed before import).
+- **Curated-only, copies-only**: images enter the store only AFTER selection (near-dup pruned,
+  diversity sampled); selected files are copied (not linked) so the store is self-contained and
+  the legacy falcon-vision-ml tree can be deleted afterwards. The v1 hardlinked 189k mirror gets
+  wiped — it cost no disk and is superseded.
+- **Order of operations**: ① wipe v1 store → ② portal discovery seeds canonical garage names →
+  ③ **portal snapshot pull first** (canonical names born correct) → ④ legacy import: dedup +
+  diversity selection over falcon-vision-ml (dry-run scan sizing this now), then copy survivors
+  under mapped names. Manifest keys unchanged (download-once still holds).
+- **Sampling default: hourly** (`--interval-min 60`), breadth-first across all garages.
+- **Clean-slate annotation**: new CVAT project — 6 classes; box attributes `InEcoParkingSpot`,
+  `InMotion`, `Occluded`; image tags garage/sensor/time-of-day/conditions auto-filled where
+  derivable (`export_cvat_labels` must emit the attribute definitions). Old arlington/wpb_banyan
+  annotations are not migrated.
+- **Preannotation**: Grounded SAM 2 (Apache-2.0, local 3090) as the box generator behind the
+  existing COCO-1.0 converter, fine-tuned lite0 as consensus partner; humans audit in CVAT
+  (confirm boxes + tick flags), export COCO → training.
+- Training-wrapper adapter (consume the store layout) lands with the first annotation round.
 
 ## Snapshot inventory verdict (2026-07-28 scan)
 
@@ -76,7 +101,19 @@ Fontainebleau ~220k, Amazon ~147k, Google ~117k. Notes:
   sensorSnapshotId → originalImageUrlSigned) with the rate-limit throttle/backoff now in
   PortalClient.
 
-## Build tasks
+## Build tasks (v2 order)
+
+- [ ] Wipe the v1 hardlinked store (after the dedup dry-run finishes measuring it).
+- [ ] Puller: `garages` table from discovery; canonical-name layout; snapshots-walk for
+      source B (snapshots → snapshotParkingSpaces → unique sensorSnapshotId →
+      originalImageUrlSigned); copies not links.
+- [ ] First portal pull (bounded, e.g. 2 runs/garage) — canonical dirs born correct.
+- [ ] Legacy import: dedup + diversity selection → copy survivors under mapped names
+      (mapping confirmed for ambiguous legacy dirs first).
+- [ ] Grounded SAM 2 runner behind the existing COCO converter; CVAT label config with
+      attributes; auto-filled tags.
+
+## Superseded v1 tasks
 
 - [x] Copy reference implementations into `portal/reference/` (downloader + yml, cloudflare_auth, PortalAPIClient/SensorImageFetcher extracted from the viewer). Delete once the puller is proven.
 - [x] **`portal/pull_training_images.py`** (first version, untested against live API): RAM-only credential prompts, OAuth refresh, org→site discovery, gateway derivation with graceful skip, sources A + B, SQLite manifest download-once, sha256 dedup, timeouts + retry/backoff, interval sampling + per-sensor/per-site caps, `--list-garages` mode.
