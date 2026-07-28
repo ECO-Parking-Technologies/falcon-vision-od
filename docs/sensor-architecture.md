@@ -21,6 +21,29 @@ firmware our models deploy into; every claim below has file:line grounding in th
 - Runs NOT on the full frame: a per-camera **ROI crop** = bounding box of all spot polygons + padding (`padTop/Bottom=0.1` defaults, optional expand-to-tensor-width/aspect). Optional CLAHE.
 - Duty-cycled, self-pacing: after each pass, idle `elapsed×(1−0.40)/0.40`, floor 1 s (`dutyCycle=0.40`). Round-robin over cameras.
 
+## ⚠️ Old-runtime file-format gotcha (field-confirmed 2026-07)
+
+Modern converters (litert-torch/ai-edge-torch) write PAD/PADV2 **paddings constants as int64**;
+TFLite runtimes ≤2.8 — including the sensor's 2.6 — read that tensor **unconditionally as int32**.
+The byte reinterpretation shifts pads onto the wrong dimensions and the graph fails to prepare
+(`reshape.cc: num_input_elements != num_output_elements … RESHAPE failed to prepare`) even though
+modern interpreters load the same file fine. Fix: `repack_for_old_runtimes()` in
+`package_dropin.py` (int64→int32 paddings downcast + buffer inlining), applied automatically by
+both exporters; outputs are bit-exact. **Always load-test artifacts on an old runtime**
+(TF 2.8 + `BUILTIN_WITHOUT_DEFAULT_DELEGATES`, no delegates) before handing files to firmware —
+modern-interpreter validation does not cover this class of failure. With the fix, even full-int8
+models load on the old runtime (the earlier "sensor can't do int8" belief was this bug in disguise).
+
+## Field-confirmed: dynamic input dims + automatic image reshaping
+
+Confirmed on a production sensor (CameraCtrl logs, 2026-07): the firmware **allocates tensors
+dynamically from whatever dims the model file declares** and reshapes/letterboxes camera frames to
+match — `"Trusting model input tensor dimensions: [320x320x3]"`, `"Input tensor type detected:
+uint8 (quantized)"`, `"Model validation passed - 4 output tensors"`, `"Model initialized
+successfully"`, then `"Processing 25 detections (max 10)"`. Practical consequence: models ship at
+their native training resolution (e.g. lite0@320, ~2× faster than forcing 448) with zero firmware
+changes; per-tier input sizes are purely an export-time choice.
+
 ## The model-file contract (what our exports must satisfy)
 
 1. **Input size: read from the model tensor** (config dims default 0 → "Trusting model input tensor dimensions"). Nothing hardcodes 448 → shipping lite0 at native 320 needs **no firmware change**.
