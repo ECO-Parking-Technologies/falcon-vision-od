@@ -636,12 +636,42 @@ def main():
                   f"floor {args.min_free_gb:.0f} GB")
     stats = PullStats()
     stats.data_root = args.data_root
-    prior_plan = args.data_root / "snapshot_plan.json"
-    if prior_plan.exists():  # seed totals so overall % is against the full plan
-        import json as _j
-        for slug, p in _j.loads(prior_plan.read_text()).items():
-            if p.get("runs"):
-                stats.progress[slug] = (0, len(p["runs"]))
+
+    # phase 1 (source b): build the COMPLETE plan first so the overall total is
+    # fixed before any pulling starts
+    plan = {}
+    if args.source in ("b", "both"):
+        import json as _json
+        manifest.db.execute(
+            "CREATE TABLE IF NOT EXISTS garages (site_id INTEGER PRIMARY KEY,"
+            " org TEXT, name TEXT, display TEXT, slug TEXT)")
+        with console.status("Planning: selecting diverse runs across all garages…") as st:
+            for i, s in enumerate(sites, 1):
+                s["slug"] = slugify(s["display"])
+                st.update(f"Planning [{i}/{len(sites)}] {s['slug']}…")
+                manifest.db.execute(
+                    "INSERT OR REPLACE INTO garages VALUES (?,?,?,?,?)",
+                    (s["site_id"], s["org"], s["name"], s["display"], s["slug"]))
+                manifest.db.commit()
+                try:
+                    runs = select_runs(portal, s["site_id"], args.runs_per_garage)
+                except Exception as e:
+                    log.warning("%s: run selection failed: %s", s["slug"], e)
+                    runs = []
+                plan[s["slug"]] = {"site_id": s["site_id"],
+                                   "runs": [{"id": r["id"], "runAt": r.get("runAt", "")}
+                                            for r in runs]}
+                if runs:
+                    stats.progress[s["slug"]] = (0, len(runs))
+                log.info("plan %s: %d runs", s["slug"], len(runs))
+        plan_file = args.data_root / "snapshot_plan.json"
+        plan_file.write_text(_json.dumps(plan, indent=1))
+        n_runs = sum(len(p["runs"]) for p in plan.values())
+        console.print(f"plan: [green]{n_runs}[/green] runs across "
+                      f"{sum(1 for p in plan.values() if p['runs'])} garages "
+                      f"(saved: {plan_file})")
+        if args.plan_only:
+            return
     total = 0
 
     with Live(stats.table(), console=console, refresh_per_second=4) as live:
@@ -663,35 +693,14 @@ def main():
                                        args.interval_min, args.max_per_sensor, notify)
 
         if args.source in ("b", "both"):
-            import json as _json
-            plan = {}
-            for s in sites:
-                s["slug"] = slugify(s["display"])
-                manifest.db.execute(
-                    "CREATE TABLE IF NOT EXISTS garages (site_id INTEGER PRIMARY KEY,"
-                    " org TEXT, name TEXT, display TEXT, slug TEXT)")
-                manifest.db.execute(
-                    "INSERT OR REPLACE INTO garages VALUES (?,?,?,?,?)",
-                    (s["site_id"], s["org"], s["name"], s["display"], s["slug"]))
-                manifest.db.commit()
-                try:
-                    runs = select_runs(portal, s["site_id"], args.runs_per_garage)
-                except Exception as e:
-                    log.warning("%s: run selection failed: %s", s["slug"], e)
-                    runs = []
-                plan[s["slug"]] = {"site_id": s["site_id"],
-                                   "runs": [{"id": r["id"], "runAt": r.get("runAt", "")}
-                                            for r in runs]}
-                log.info("plan %s: %d runs %s", s["slug"], len(runs),
-                         [r.get("runAt", "")[:16] for r in runs])
+            # phase 2: pull against the frozen plan built before the Live table
+            for i, s in enumerate(sites, 1):
+                runs = plan[s["slug"]]["runs"]
                 if not args.plan_only and runs:
                     total += pull_source_b(portal, manifest, args.data_root, s,
                                            runs, notify,
-                                           pos=f"[garage {len(plan)}/{len(sites)}] ")
-            plan_file = args.data_root / "snapshot_plan.json"
-            plan_file.write_text(_json.dumps(plan, indent=1))
-            console.print(f"run selection saved: [bold]{plan_file}[/bold] "
-                          f"({sum(len(p['runs']) for p in plan.values())} runs)")
+                                           pos=f"[garage {i}/{len(sites)}] ")
+
 
         stats.current = ""
         live.update(stats.table())
