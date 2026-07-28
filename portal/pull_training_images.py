@@ -663,6 +663,10 @@ def main():
                                             for r in runs]}
                 if runs:
                     stats.progress[s["slug"]] = (0, len(runs))
+                    # pre-populate the table row so every planned garage is
+                    # visible at 0% until the pull reaches it
+                    stats.rows.setdefault((s["slug"], "•"),
+                                          dict.fromkeys(PullStats.EVENTS, 0))
                 log.info("plan %s: %d runs", s["slug"], len(runs))
         plan_file = args.data_root / "snapshot_plan.json"
         plan_file.write_text(_json.dumps(plan, indent=1))
