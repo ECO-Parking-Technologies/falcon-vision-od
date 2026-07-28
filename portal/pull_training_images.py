@@ -21,6 +21,7 @@ Usage:
 import argparse
 import hashlib
 import logging
+import os
 import re
 import sqlite3
 import sys
@@ -257,6 +258,47 @@ def store_bytes(data: bytes, dest: Path, manifest: Manifest,
     return True
 
 
+def backfill_legacy(legacy_root: Path, data_root: Path, manifest: "Manifest"):
+    """Import existing training images into the unified store.
+
+    Registers files under source 'sensor-store' with the same (sensor/filename)
+    keys the live puller uses, so already-held images are never re-downloaded.
+    Hardlinks when possible (same filesystem), copies otherwise.
+    """
+    import shutil
+    stats = dict.fromkeys(("new", "dup", "cached", "skipped"), 0)
+    for png in sorted(legacy_root.glob("*/training_images/*/*.png")):
+        garage, _, sensor, name = png.parts[-4:]
+        parts = name.split("-")
+        if len(parts) < 4 or len(parts[2]) != 8:
+            stats["skipped"] += 1
+            log.debug("skip unparseable filename %s", name)
+            continue
+        when = f"{parts[2][:4]}-{parts[2][4:6]}-{parts[2][6:]}T{parts[3][:2]}:{parts[3][2:4]}"
+        key = f"{sensor}/{name}"
+        if manifest.has("sensor-store", key):
+            stats["cached"] += 1
+            continue
+        data = png.read_bytes()
+        sha = hashlib.sha256(data).hexdigest()
+        existing = manifest.path_for_sha(sha)
+        if existing:
+            manifest.add("sensor-store", key, garage, sensor, when, sha, len(data), existing)
+            stats["dup"] += 1
+            continue
+        dest = data_root / "images" / garage / sensor / parts[2][:4] / parts[2][4:6] / name
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            os.link(png, dest)
+        except OSError:
+            shutil.copy2(png, dest)
+        manifest.add("sensor-store", key, garage, sensor, when, sha, len(data), dest)
+        stats["new"] += 1
+        if stats["new"] % 500 == 0:
+            log.info("backfill progress: %s", stats)
+    return stats
+
+
 def hour_range(start: datetime, end: datetime):
     t = start.replace(minute=0, second=0)
     while t < end:
@@ -376,7 +418,11 @@ def pull_source_b(portal, manifest, data_root, site, max_per_site, notify):
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--data-root", type=Path, required=True)
+    ap.add_argument("--data-root", type=Path,
+                    default=Path("/media/lopezemi/Expansion/falcon-vision-od-data"))
+    ap.add_argument("--backfill", type=Path, metavar="LEGACY_ROOT",
+                    help="import existing <garage>/training_images/<sensor>/*.png into the "
+                         "store (hardlink + manifest register, no network), then exit")
     ap.add_argument("--source", choices=["a", "b", "both"], default="both",
                     help="a = sensor training stores, b = portal snapshots")
     ap.add_argument("--start", help="YYYYMMDDHHmm UTC (source a)")
@@ -397,6 +443,17 @@ def main():
     args.data_root.mkdir(parents=True, exist_ok=True)
     log_file = args.log_file or args.data_root / "pull.log"
     setup_logging(log_file)
+
+    if args.backfill:
+        manifest = Manifest(args.data_root / "manifest.sqlite")
+        console.print(f"Backfilling from [bold]{args.backfill}[/bold] → {args.data_root} …")
+        stats = backfill_legacy(args.backfill, args.data_root, manifest)
+        console.print(Panel(
+            f"imported [green]{stats['new']}[/green] · content-dup [yellow]{stats['dup']}[/yellow] · "
+            f"already registered [dim]{stats['cached']}[/dim] · unparseable {stats['skipped']}",
+            title="Backfill done", border_style="green"))
+        log.info("backfill complete: %s", stats)
+        return
 
     # --- credentials: prompted (no echo), RAM only, never logged/persisted ---
     console.print(Panel("Credentials are held in memory only — never written to disk.\n"

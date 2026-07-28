@@ -51,6 +51,13 @@ Few images per sensor per time window, spread wide:
 - Spread across time-of-day buckets and calendar days; prefer occupancy-change moments over static repeats; perceptual-hash out the near-identical frames.
 - The cap + manifest make repeated runs incremental: each run tops up new time windows only.
 
+## Agreed structure (decided 2026-07-28)
+
+- **Data root: `/media/lopezemi/Expansion/falcon-vision-od-data`** (new, owned by this repo's tooling; the puller's `--data-root` default). Layout `images/<garage>/<sensor>/<YYYY>/<MM>/<file>` + `manifest.sqlite` + `pull.log`.
+- **Existing arlington/wpb_banyan/amazon data backfilled** via `pull_training_images.py --backfill <legacy_root>`: hardlinked into the store and registered under the same `(sensor, filename)` keys the live puller checks — history counts toward download-once, sha256 dedup spans old+new. Legacy dirs become read-only history.
+- **Sampling default: hourly** (`--interval-min 60`, ≈24 img/sensor/day), breadth-first across all portal-discovered garages.
+- Training-wrapper adapter (point its glob at the new layout) lands together with the first annotation round on pulled data.
+
 ## Build tasks
 
 - [x] Copy reference implementations into `portal/reference/` (downloader + yml, cloudflare_auth, PortalAPIClient/SensorImageFetcher extracted from the viewer). Delete once the puller is proven.
