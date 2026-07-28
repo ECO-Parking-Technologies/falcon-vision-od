@@ -447,16 +447,23 @@ def snapshot_frames(portal, snapshot_id):
         " sensorSnapshotId originalImageUrlSigned"
         " detectedBySensor { configurationName } } } } }",
         {"id": snapshot_id})["snapshot"]
+    from urllib.parse import unquote, urlparse
     frames, seen = [], set()
     for n in d["snapshotParkingSpaces"]["nodes"]:
-        uuid, url = n.get("sensorSnapshotId"), n.get("originalImageUrlSigned")
-        if not uuid or not url or uuid in seen:
+        url = n.get("originalImageUrlSigned")
+        if not url:
             continue
-        seen.add(uuid)
-        sensor = ((n.get("detectedBySensor") or {}).get("configurationName") or "unknown").lower()
-        if not sensor.startswith("fv"):
-            sensor = "fv" + sensor
-        frames.append({"uuid": uuid, "url": url, "sensor": sensor})
+        # sensorSnapshotId is often null; the blob path is a stable identity:
+        # /snapshots/<run-uuid>/originals/<sensor-mac>-cameraN.jpg
+        parts = [unquote(p) for p in urlparse(url).path.split("/") if p]
+        uid = n.get("sensorSnapshotId") or "/".join(parts[-3:])
+        if uid in seen:
+            continue
+        seen.add(uid)
+        sensor = slugify((n.get("detectedBySensor") or {}).get("configurationName")
+                         or "unknown")
+        fname = re.sub(r"[^A-Za-z0-9._-]", "_", f"{parts[-3][:8]}-{parts[-1]}")
+        frames.append({"uuid": uid, "url": url, "sensor": sensor, "fname": fname})
     return frames
 
 
@@ -486,8 +493,7 @@ def pull_source_b(portal, manifest, data_root, site, runs, notify):
                 notify(garage, fr["sensor"], "error")
                 continue
             dest = (data_root / "images" / garage / fr["sensor"] /
-                    ts[:4] / ts[5:7] /
-                    f"{fr['sensor']}-snapshot-{fr['uuid']}.jpg")
+                    ts[:4] / ts[5:7] / f"{fr['sensor']}-{fr['fname']}")
             new = store_bytes(r.content, dest, manifest, "portal-snapshot", fr["uuid"],
                               garage, fr["sensor"], ts)
             notify(garage, fr["sensor"], "new" if new else "dup")
