@@ -329,8 +329,10 @@ def export_artifacts(cfg):
     if export_py.exists():
         jobs.append([str(export_py), str(repo / "export_tflite.py"), "--checkpoint", ckpt])
         if (repo / "package_dropin.py").exists():
+            # no flag: the packager builds and then validates by default
+            # (do NOT pass --validate: argparse prefix-matches it to --validate-only)
             jobs.append([str(export_py), str(repo / "package_dropin.py"),
-                         "--checkpoint", ckpt, "--validate"])
+                         "--checkpoint", ckpt])
     else:
         print("[export] export venv missing (run setup_export_venv.sh) — TFLite export skipped")
     for job in jobs:
