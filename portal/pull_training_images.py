@@ -67,7 +67,7 @@ class PullStats:
         row[event] += 1
 
     def table(self):
-        t = Table(title="Training image pull", box=box.SIMPLE_HEAD)
+        t = Table(title="Training image pull (one row per garage)", box=box.SIMPLE_HEAD)
         for col, style in (("garage", "cyan"), ("sensor", "cyan"), ("new", "green"),
                            ("dup", "yellow"), ("cached", "dim"), ("errors", "red")):
             t.add_column(col, style=style, justify="right" if col not in ("garage", "sensor") else "left")
@@ -467,22 +467,22 @@ def snapshot_frames(portal, snapshot_id):
     return frames
 
 
-def pull_source_b(portal, manifest, data_root, site, runs, notify):
+def pull_source_b(portal, manifest, data_root, site, runs, notify, pos=""):
     """Portal snapshot archive: pull the planned runs' full frames, download once."""
     garage = site["slug"]
     pulled = 0
-    for run in runs:
+    for j, run in enumerate(runs, 1):
         ts = run.get("runAt") or ""
-        notify(garage, "*", None, f"{garage} run {ts[:16]}")
+        notify(garage, "•", None, f"{pos}{garage} · run {j}/{len(runs)} · {ts[:16]}")
         try:
             frames = snapshot_frames(portal, run["id"])
         except Exception as e:
             log.warning("%s snapshot %s failed: %s", garage, run["id"], e)
-            notify(garage, "*", "error")
+            notify(garage, "•", "error")
             continue
         for fr in frames:
             if manifest.has("portal-snapshot", fr["uuid"]):
-                notify(garage, fr["sensor"], "cached")
+                notify(garage, "•", "cached")
                 continue
             try:
                 # presigned URL: auth embedded, bare session; never persist it
@@ -490,13 +490,13 @@ def pull_source_b(portal, manifest, data_root, site, runs, notify):
                 r.raise_for_status()
             except Exception as e:
                 log.warning("frame fetch failed %s: %s", fr["uuid"], e)
-                notify(garage, fr["sensor"], "error")
+                notify(garage, "•", "error")
                 continue
             dest = (data_root / "images" / garage / fr["sensor"] /
                     ts[:4] / ts[5:7] / f"{fr['sensor']}-{fr['fname']}")
             new = store_bytes(r.content, dest, manifest, "portal-snapshot", fr["uuid"],
                               garage, fr["sensor"], ts)
-            notify(garage, fr["sensor"], "new" if new else "dup")
+            notify(garage, "•", "new" if new else "dup")
             pulled += 1
     return pulled
 
@@ -627,7 +627,8 @@ def main():
                          [r.get("runAt", "")[:16] for r in runs])
                 if not args.plan_only and runs:
                     total += pull_source_b(portal, manifest, args.data_root, s,
-                                           runs, notify)
+                                           runs, notify,
+                                           pos=f"[garage {len(plan)}/{len(sites)}] ")
             plan_file = args.data_root / "snapshot_plan.json"
             plan_file.write_text(_json.dumps(plan, indent=1))
             console.print(f"run selection saved: [bold]{plan_file}[/bold] "
