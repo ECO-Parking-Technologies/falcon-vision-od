@@ -402,8 +402,18 @@ def free_gb(path):
     return shutil.disk_usage(path).free / 1e9
 
 
-def check_disk(data_root, min_free_gb):
-    """Abort the pull gracefully before the disk gets tight."""
+_last_disk_check = 0.0
+
+
+def check_disk(data_root, min_free_gb, interval_s=60):
+    """Abort the pull gracefully before the disk gets tight.
+
+    Throttled: callers can invoke freely, the actual check runs at most
+    once per interval_s (pass interval_s=0 to force, e.g. at startup)."""
+    global _last_disk_check
+    if time.time() - _last_disk_check < interval_s:
+        return
+    _last_disk_check = time.time()
     g = free_gb(data_root)
     if g < min_free_gb:
         log.error("disk guard: only %.1f GB free (< %.0f GB floor) — stopping", g, min_free_gb)
@@ -609,7 +619,7 @@ def main():
 
     manifest = Manifest(args.data_root / "manifest.sqlite")
     pull_source_b.min_free_gb = args.min_free_gb
-    check_disk(args.data_root, args.min_free_gb)
+    check_disk(args.data_root, args.min_free_gb, interval_s=0)
     console.print(f"disk guard: {free_gb(args.data_root):.0f} GB free, "
                   f"floor {args.min_free_gb:.0f} GB")
     stats = PullStats()
