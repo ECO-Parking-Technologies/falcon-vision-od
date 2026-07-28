@@ -125,3 +125,15 @@ Fontainebleau ~220k, Amazon ~147k, Google ~117k. Notes:
 - [ ] Wire pulled layout into preannotation/training (thin split step or config path update).
 
 *Parked (not current focus):* `snapshotParkingSpace.bounds` spot polygons and the human occupancy labels in validations remain available for the track-06 evaluator whenever spot-level evaluation becomes relevant.
+
+## Future: gateway-resident annotation oracle (noted 2026-07-28)
+
+Gateway HW (Ubuntu Core 24, x86_64, snaps) can run Grounding DINO-class models for
+continuous on-site auto-annotation of new snapshot runs + QA auditing of sensor decisions:
+Supermicro SYS-111AD-WRN2 (Xeon/Core 12-14th gen, ~1.5-4s/frame CPU int8, PCIe room for a
+T4/L4-class GPU later) and OnLogic K521 (Core Ultra 7 165H — OpenVINO can target its Arc
+iGPU/NPU, ~0.5-1.5s/frame, fanless) are viable; CL250 is not. 32GB+ RAM fine (~4GB needed).
+Packaging: OpenVINO int8 (GroundingDINO→ONNX→OV) in a strict snap — avoid CUDA-in-snap.
+Division of labor: 3090 does historical backfill (~14k img/h); gateways handle incremental
+snaps + drift detection. Not on the critical path — revisit after the first clean-slate
+training round.
