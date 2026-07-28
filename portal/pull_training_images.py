@@ -402,8 +402,25 @@ def select_runs(portal, site_id, per_garage):
     AND across time-of-day buckets (night/morning/day/evening)."""
     runs = portal.graphql(
         "query($id: Int!) { snapshots(condition: {siteId: $id}, first: 1000)"
-        " { nodes { id runAt } } }", {"id": site_id})["snapshots"]["nodes"]
-    runs = sorted((r for r in runs if r.get("runAt")), key=lambda r: r["runAt"])
+        " { nodes { id runAt snapshotParkingSpaces { totalCount } } } }",
+        {"id": site_id})["snapshots"]["nodes"]
+    # prune failed/empty runs (no images) and back-to-back re-runs (< 6h apart:
+    # keep the run with more images, which drops aborted retries too)
+    runs = sorted((r for r in runs
+                   if r.get("runAt") and r["snapshotParkingSpaces"]["totalCount"] > 0),
+                  key=lambda r: r["runAt"])
+    spaced = []
+    for r in runs:
+        if spaced and (r["runAt"][:13] <= spaced[-1]["runAt"][:13] or
+                       abs(datetime.fromisoformat(r["runAt"][:19]) -
+                           datetime.fromisoformat(spaced[-1]["runAt"][:19]))
+                       < timedelta(hours=6)):
+            if (r["snapshotParkingSpaces"]["totalCount"] >
+                    spaced[-1]["snapshotParkingSpaces"]["totalCount"]):
+                spaced[-1] = r
+            continue
+        spaced.append(r)
+    runs = spaced
     if len(runs) <= per_garage:
         return runs
     buckets = {}
