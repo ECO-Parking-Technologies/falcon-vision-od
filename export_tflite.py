@@ -32,6 +32,7 @@ from ai_edge_quantizer import quantizer as aeq_quantizer
 from ai_edge_quantizer import recipe as aeq_recipe
 
 from artifact_paths import artifact_dir, update_latest_symlink, update_manifest
+from package_dropin import repack_for_old_runtimes
 
 from effdet import create_model
 from effdet.config.model_config import efficientdet_model_param_dict as MODEL_CONFIG
@@ -204,6 +205,7 @@ def main():
     edge_model = litert_torch.convert(export_model, sample)
     f32_path = art_dir / f"{art_dir.name}.f32.tflite"
     edge_model.export(str(f32_path))
+    repack_for_old_runtimes(f32_path)  # int32 pad paddings + inline buffers for old sensor runtime
     print(f"Wrote {f32_path}")
 
     # float parity vs PyTorch
@@ -234,6 +236,7 @@ def main():
     dyn_path = art_dir / f"{art_dir.name}.dynamic.tflite"
     qt_dyn = aeq_quantizer.Quantizer(f32_path, aeq_recipe.dynamic_wi8_afp32())
     qt_dyn.quantize(serialize_to_path=dyn_path)
+    repack_for_old_runtimes(dyn_path)
     print(f"Wrote {dyn_path}")
     db, ds = run_tflite(dyn_path, sample[0])
     dyn_parity = parity("dynamic parity", ref_boxes.numpy(), ref_scores.numpy(), db, ds)
@@ -275,6 +278,7 @@ def main():
     calib_result = qt.calibrate({sig_key: calib_inputs})
     q_path = art_dir / f"{art_dir.name}.int8.tflite"
     qt.quantize(calib_result, serialize_to_path=q_path)
+    repack_for_old_runtimes(q_path)  # harmless for int8 (still needs a newer runtime)
     print(f"Wrote {q_path}")
 
     # int8-vs-PyTorch parity on a real image

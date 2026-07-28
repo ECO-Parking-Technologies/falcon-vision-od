@@ -195,6 +195,65 @@ def postprocess_options(num_classes, score_threshold):
     })
 
 
+def _inline_external_buffers(model, raw: bytes):
+    """LiteRT writes big constants outside the flatbuffer (buffer offset/size);
+    repacking with the object API would drop that region. Inline them --
+    plain in-flatbuffer buffers are also what old runtimes expect."""
+    for buf in model.buffers:
+        offset = getattr(buf, "offset", 0) or 0
+        if offset > 1:
+            buf.data = np.frombuffer(raw[offset:offset + buf.size], dtype=np.uint8)
+            buf.offset = 0
+            buf.size = 0
+
+
+# Ops whose paddings input (index 1) old TFLite kernels (<= 2.8 pad.cc /
+# mirror_pad.cc) read unconditionally as int32.
+_PADDINGS_OPS = (schema.BuiltinOperator.PAD, schema.BuiltinOperator.PADV2,
+                 schema.BuiltinOperator.MIRROR_PAD)
+
+
+def _downcast_int64_paddings(model):
+    """litert-torch emits PAD/PADV2 paddings as INT64 constants. Old TFLite
+    runtimes (2.6-2.8) read the paddings tensor as int32 regardless of its
+    declared type, so each int64 pair [0,0],[0,1],... is misread as
+    [0,0],[0,0],[0,1],... -- shifting the pads onto the wrong dims (observed:
+    'reshape 1040 != 1600' at prepare, channels padded 64->65). Rewriting the
+    constants as INT32 (values are tiny) is valid on every runtime version."""
+    for sg in model.subgraphs:
+        for op in sg.operators:
+            oc = model.operatorCodes[op.opcodeIndex]
+            builtin = max(oc.builtinCode or 0, oc.deprecatedBuiltinCode or 0)
+            if builtin not in _PADDINGS_OPS or len(op.inputs) < 2:
+                continue
+            t = sg.tensors[op.inputs[1]]
+            buf = model.buffers[t.buffer]
+            if t.type != schema.TensorType.INT64 or buf.data is None:
+                continue
+            vals = np.frombuffer(bytes(buf.data), dtype=np.int64)
+            if vals.size and (np.abs(vals) > np.iinfo(np.int32).max).any():
+                sys.exit(f"paddings tensor {t.name} has values too large for int32")
+            # fresh buffer: the int64 one may be shared with another tensor
+            nb = schema.BufferT()
+            nb.data = np.frombuffer(vals.astype(np.int32).tobytes(), dtype=np.uint8)
+            model.buffers.append(nb)
+            t.buffer = len(model.buffers) - 1
+            t.type = schema.TensorType.INT32
+
+
+def repack_for_old_runtimes(src: Path, dst: Path = None):
+    """Repack a litert-converted .tflite so old (2.6-2.8) TFLite runtimes parse
+    it correctly: inline out-of-flatbuffer buffers, int32 pad paddings.
+    Shared by package_dropin (via apply_surgery) and export_tflite."""
+    raw = src.read_bytes()
+    model = schema.ModelT.InitFromPackedBuf(bytearray(raw), 0)
+    _inline_external_buffers(model, raw)
+    _downcast_int64_paddings(model)
+    builder = flatbuffers.Builder(1024)
+    builder.Finish(model.Pack(builder), b"TFL3")
+    (dst or src).write_bytes(builder.Output())
+
+
 def apply_surgery(src: Path, dst: Path, anchors: np.ndarray, num_classes: int,
                   score_threshold: float):
     """uint8 input + DEQUANTIZE, then append TFLite_Detection_PostProcess."""
@@ -202,15 +261,8 @@ def apply_surgery(src: Path, dst: Path, anchors: np.ndarray, num_classes: int,
     model = schema.ModelT.InitFromPackedBuf(bytearray(raw), 0)
     sg = model.subgraphs[0]
 
-    # LiteRT writes big constants outside the flatbuffer (buffer offset/size);
-    # repacking with the object API would drop that region. Inline them --
-    # plain in-flatbuffer buffers are also what old runtimes expect.
-    for buf in model.buffers:
-        offset = getattr(buf, "offset", 0) or 0
-        if offset > 1:
-            buf.data = np.frombuffer(raw[offset:offset + buf.size], dtype=np.uint8)
-            buf.offset = 0
-            buf.size = 0
+    _inline_external_buffers(model, raw)
+    _downcast_int64_paddings(model)
 
     # --- (a) uint8 input feeding a DEQUANTIZE into the old float input ---
     if len(sg.inputs) != 1:
