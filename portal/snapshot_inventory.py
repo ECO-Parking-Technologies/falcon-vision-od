@@ -82,7 +82,8 @@ def main():
                         f"Log: [bold]{log_file}[/bold]",
                         title="Portal snapshot inventory", border_style="cyan"))
     token = Prompt.ask("[cyan]Portal API refresh token[/cyan]", password=True,
-                       console=console).strip()
+                       console=console)
+    token = "".join(token.split())  # kill line-wrap newlines from long pastes
     if not token:
         sys.exit("portal token required")
     portal = PortalClient(token)

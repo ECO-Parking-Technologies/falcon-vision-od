@@ -123,7 +123,15 @@ class PortalClient:
             "refresh_token": self._refresh_token,
             "client_id": PORTAL_CLIENT_ID,
         }, timeout=TIMEOUT)
-        r.raise_for_status()
+        if r.status_code != 200:
+            try:
+                detail = r.json().get("error") or r.text[:300]
+            except Exception:
+                detail = r.text[:300]
+            raise RuntimeError(
+                f"token exchange failed ({r.status_code}): {detail} — "
+                "check the refresh token (portal → Personal API Tokens; "
+                "it may be expired/revoked or mispasted)")
         data = r.json()
         self._access_token = data["access_token"]
         self._expiry = time.time() + data.get("expires_in", 1200)
@@ -460,7 +468,8 @@ def main():
                         f"Detailed log: [bold]{log_file}[/bold]",
                         title="Training image pull", border_style="cyan"))
     portal_token = Prompt.ask("[cyan]Portal API refresh token[/cyan]",
-                              password=True, console=console).strip()
+                              password=True, console=console)
+    portal_token = "".join(portal_token.split())  # kill line-wrap newlines from long pastes
     if not portal_token:
         sys.exit("portal token required")
     portal = PortalClient(portal_token)
