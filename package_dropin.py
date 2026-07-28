@@ -54,7 +54,7 @@ from config.label_loader import load_label_map
 from effdet import create_model, get_efficientdet_config
 from effdet.anchors import Anchors
 
-IMAGE_SIZE = 448  # fixed by the firmware contract, NOT the model's native size
+IMAGE_SIZE = 448  # default; firmware reads input dims from the model, so --input-size works too
 MAX_DETECTIONS = 25
 NMS_IOU_THRESHOLD = 0.5
 CAR_CLASS = 2  # 0-based class index for "car" in both baseline (COCO) and ours
@@ -342,8 +342,9 @@ def validate(packaged: Path, baseline: Path, car_image: Path, empty_image: Path,
     it_p.allocate_tensors()
 
     bi, pi = it_b.get_input_details()[0], it_p.get_input_details()[0]
-    in_ok = (list(bi["shape"]) == list(pi["shape"]) == [1, IMAGE_SIZE, IMAGE_SIZE, 3]
-             and pi["dtype"] == np.uint8)
+    s_b = int(bi["shape"][1])
+    in_ok = (list(pi["shape"]) == [1, IMAGE_SIZE, IMAGE_SIZE, 3]
+             and pi["dtype"] == np.uint8 and np.dtype(bi["dtype"]) == np.uint8)
     print(f"[{'ok' if in_ok else 'FAIL'}] input: packaged {list(pi['shape'])} "
           f"{np.dtype(pi['dtype']).name} q={pi['quantization']} "
           f"| baseline {list(bi['shape'])} {np.dtype(bi['dtype']).name} "
@@ -363,9 +364,8 @@ def validate(packaged: Path, baseline: Path, car_image: Path, empty_image: Path,
     stats["outputs"] = [{"shape": s, "dtype": t} for s, t in po]
 
     # --- busy frame: car boxes must overlap the baseline's ---
-    x = load_uint8_rgb(car_image)
-    pb, pc, ps, pn = run_detector(packaged, x)
-    bb, bc, bs, bn = run_detector(baseline, x)
+    pb, pc, ps, pn = run_detector(packaged, load_uint8_rgb(car_image, IMAGE_SIZE))
+    bb, bc, bs, bn = run_detector(baseline, load_uint8_rgb(car_image, s_b))
     p_cars = detections(pb, pc, ps, thresh, CAR_CLASS)
     b_cars = detections(bb, bc, bs, thresh, CAR_CLASS)
     print(f"\ncar image: {car_image.name}")
@@ -393,7 +393,7 @@ def validate(packaged: Path, baseline: Path, car_image: Path, empty_image: Path,
     }
 
     # --- empty frame: silence above threshold ---
-    xe = load_uint8_rgb(empty_image)
+    xe = load_uint8_rgb(empty_image, IMAGE_SIZE)
     eb, ec, es, en = run_detector(packaged, xe)
     hits = detections(eb, ec, es, thresh)
     empty_ok = len(hits[0]) == 0
@@ -427,18 +427,24 @@ def main():
     ap.add_argument("--score-threshold", type=float, default=0.3,
                     help="validation reporting threshold (the packaged model itself "
                          "keeps the baseline's -inf NMS score threshold)")
+    ap.add_argument("--input-size", type=int, default=448,
+                    help="square input size baked into the packaged model "
+                         "(firmware resizes frames to match; 320 = lite0 native)")
     ap.add_argument("--validate-only", action="store_true",
                     help="skip building; validate the existing packaged file")
     args = ap.parse_args()
 
     cfg = yaml.safe_load(Path("config/train_wrapper_config.yaml").read_text())
     model_name = args.model or cfg["model"]
+    global IMAGE_SIZE
+    IMAGE_SIZE = args.input_size
     num_classes = args.num_classes or cfg.get("num_classes", len(load_label_map()))
     out_dir = Path(cfg["output_dir"])
     ckpt = args.checkpoint or find_ckpt(out_dir)
     art_dir = artifact_dir(out_dir, model_name, ckpt)
-    dropin_path = art_dir / f"{art_dir.name}.dropin.tflite"
-    dropin_f32_path = art_dir / f"{art_dir.name}.dropin.f32.tflite"
+    size_tag = "" if args.input_size == 448 else str(args.input_size)
+    dropin_path = art_dir / f"{art_dir.name}.dropin{size_tag}.tflite"
+    dropin_f32_path = art_dir / f"{art_dir.name}.dropin{size_tag}.f32.tflite"
 
     if not args.validate_only:
         print(f"Packaging {model_name} ({IMAGE_SIZE}x{IMAGE_SIZE}, "
@@ -452,7 +458,7 @@ def main():
             ref_boxes, _ = wrapper(sample[0])
         n_anchors = ref_boxes.shape[1]
 
-        anchors = build_anchors(model_name)
+        anchors = build_anchors(model_name, IMAGE_SIZE)
         if anchors.shape[0] != n_anchors:
             sys.exit(f"anchor count {anchors.shape[0]} != model output {n_anchors}")
         print(f"Graph: input [1,{IMAGE_SIZE},{IMAGE_SIZE},3] raw RGB, "
