@@ -66,9 +66,11 @@ from the portal**, and ordering follows from that.
   `arlington → Arlington Heights/Vail Avenue Garage`, `switch → City of Fishers/Switch Garage`,
   `carmel_* → Carmel/*`, `google*` → Google Alta — ambiguous ones confirmed before import).
 - **Curated-only, copies-only**: images enter the store only AFTER selection (near-dup pruned,
-  diversity sampled); selected files are copied (not linked) so the store is self-contained and
-  the legacy falcon-vision-ml tree can be deleted afterwards. The v1 hardlinked 189k mirror gets
-  wiped — it cost no disk and is superseded.
+  diversity sampled); selected files are copied (not linked) so the store is fully self-contained.
+  **falcon-vision-ml's data is READ-ONLY source material — never deleted, never modified**: it
+  remains the active dataset for the production image-classification model, which is still in
+  heavy use. We only copy from it. The v1 hardlinked 189k mirror in OUR store gets wiped (it cost
+  no disk and is superseded); that wipe touches only falcon-vision-od-data, never the originals.
 - **Order of operations**: ① wipe v1 store → ② portal discovery seeds canonical garage names →
   ③ **portal snapshot pull first** (canonical names born correct) → ④ legacy import: dedup +
   diversity selection over falcon-vision-ml (dry-run scan sizing this now), then copy survivors
