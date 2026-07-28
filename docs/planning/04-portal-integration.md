@@ -58,6 +58,24 @@ Few images per sensor per time window, spread wide:
 - **Sampling default: hourly** (`--interval-min 60`, ≈24 img/sensor/day), breadth-first across all portal-discovered garages.
 - Training-wrapper adapter (point its glob at the new layout) lands together with the first annotation round on pulled data.
 
+## Snapshot inventory verdict (2026-07-28 scan)
+
+**Portal snapshots alone are sufficient for training — sensor pulls demoted to optional.**
+Scan of all 43 sites (`portal/snapshot_inventory.py`, data/inventory-20260728-125911.json):
+**2,510 snapshot runs · ~2.11M per-space crop images (est.) · 40/43 garages · 2021→2026 span**,
+plus 1,880 validations (human-labeled occupancy) for eval. Top sites: Yaamava ~334k, UF ~240k,
+Fontainebleau ~220k, Amazon ~147k, Google ~117k. Notes:
+- The 2.1M figure counts **per-space crops**; for OD training we want the **full camera frames**
+  behind them (`originalImageUrlSigned`, deduped by `sensorSnapshotId`) — roughly runs × sensors
+  ≈ **~100–200k unique full frames**, still ~100× today's 1,439 garage images.
+- Diversity is excellent: 40 garages across climates/architectures (casinos, airports,
+  universities, municipal), 5-year span; sparse sites (Midtown: 5 runs) are fixable on demand
+  since snapshot runs can be triggered per garage.
+- **Puller change required**: source B currently walks *validations* (only some sites run them);
+  it must walk **snapshots directly** (snapshots → snapshotParkingSpaces → unique
+  sensorSnapshotId → originalImageUrlSigned) with the rate-limit throttle/backoff now in
+  PortalClient.
+
 ## Build tasks
 
 - [x] Copy reference implementations into `portal/reference/` (downloader + yml, cloudflare_auth, PortalAPIClient/SensorImageFetcher extracted from the viewer). Delete once the puller is proven.
