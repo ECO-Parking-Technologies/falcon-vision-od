@@ -28,38 +28,47 @@ from rich.panel import Panel
 from rich.prompt import Prompt
 from rich.table import Table
 
-FRAMES_QUERY = (
-    "query($id: UUID!) { validation(id: $id) { createdTimestamp"
-    " validationParkingSpaces { nodes { snapshotParkingSpace {"
-    " id sensorSnapshotId detectedBySensor { configurationName } } } } } }"
-)
+def introspect(portal):
+    """Discover live schema facts for snapshots (the docs dump is stale)."""
+    info = {}
+    q = portal.graphql('{ __type(name: "Query") { fields { name } } }')
+    fields = [f["name"] for f in q["__type"]["fields"]]
+    info["query_fields_snapshotish"] = [f for f in fields if "napshot" in f]
+    t = portal.graphql('{ __type(name: "Snapshot") { fields { name } } }')
+    info["snapshot_fields"] = [f["name"] for f in (t["__type"] or {}).get("fields", [])]
+    e = portal.graphql('{ __type(name: "SnapshotsOrderBy") { enumValues { name } } }')
+    info["order_by"] = [v["name"] for v in (e["__type"] or {}).get("enumValues", [])]
+    log.info("introspection: %s", info)
+    return info
+
+
+def pick_ts_field(info):
+    for cand in ("runAt", "createdTimestamp", "timestamp"):
+        if cand in info["snapshot_fields"]:
+            return cand
+    return None
 
 
 def site_row(stats, key):
     s = stats[key]
     rng = f"{s['oldest'][:10]}→{s['newest'][:10]}" if s["oldest"] else "—"
-    return (s["org"], s["garage"], f"{s['completed']}/{s['validations']}",
-            str(s["frames"]), str(s["crops"]), str(len(s["sensors"])), rng)
+    return (s["org"], s["garage"], str(s["snapshots"]), rng, str(s["validations"]))
 
 
 def build_table(stats, done, total):
     t = Table(title=f"Portal snapshot inventory ({done}/{total} sites scanned)",
               box=box.SIMPLE_HEAD)
-    for col in ("account", "garage", "validations✓", "full frames", "space crops",
-                "sensors", "date range"):
+    for col in ("account", "garage", "snapshots", "date range", "validations"):
         t.add_column(col, justify="right" if col not in ("account", "garage") else "left")
-    tot = dict(frames=0, crops=0, completed=0, validations=0, sensors=set())
+    tot = dict(snapshots=0, validations=0)
     for key in sorted(stats):
         t.add_row(*site_row(stats, key))
-        s = stats[key]
-        tot["frames"] += s["frames"]; tot["crops"] += s["crops"]
-        tot["completed"] += s["completed"]; tot["validations"] += s["validations"]
-        tot["sensors"] |= s["sensors"]
+        tot["snapshots"] += stats[key]["snapshots"]
+        tot["validations"] += stats[key]["validations"]
     if stats:
         t.add_section()
-        t.add_row("TOTAL", f"{len(stats)} garages",
-                  f"{tot['completed']}/{tot['validations']}", str(tot["frames"]),
-                  str(tot["crops"]), str(len(tot["sensors"])), "")
+        t.add_row("TOTAL", f"{len(stats)} garages", str(tot["snapshots"]), "",
+                  str(tot["validations"]))
     return t
 
 
@@ -97,74 +106,73 @@ def main():
     log.info("discovered %d sites", len(sites))
     console.print(f"[green]{len(sites)}[/green] site(s) discovered\n")
 
+    with console.status("Introspecting live schema for snapshots…"):
+        info = introspect(portal)
+    console.print(f"snapshot-ish query fields: [cyan]{info['query_fields_snapshotish']}[/cyan]")
+    if "snapshots" not in info["query_fields_snapshotish"]:
+        console.print("[red]No `snapshots` query on the live API[/red] — see the log for "
+                      "what exists; paste this output back for the next iteration.")
+        sys.exit(1)
+    ts_field = pick_ts_field(info)
+    asc = next((v for v in info["order_by"] if ts_field and v.startswith(
+        "RUN_AT_ASC" if ts_field == "runAt" else "CREATED_TIMESTAMP_ASC")), None)
+    desc = asc.replace("_ASC", "_DESC") if asc else None
+    log.info("using ts_field=%s orderBy=%s/%s", ts_field, asc, desc)
+
+    def snapshot_stats(site_id):
+        n = portal.graphql(
+            "query($id: Int!) { snapshots(condition: {siteId: $id}) { totalCount } }",
+            {"id": site_id})["snapshots"]["totalCount"]
+        oldest = newest = ""
+        if n and ts_field and asc:
+            for order, slot in ((asc, "oldest"), (desc, "newest")):
+                r = portal.graphql(
+                    f"query($id: Int!) {{ snapshots(condition: {{siteId: $id}}, "
+                    f"orderBy: {order}, first: 1) {{ nodes {{ {ts_field} }} }} }}",
+                    {"id": site_id})["snapshots"]["nodes"]
+                if r:
+                    if slot == "oldest":
+                        oldest = r[0][ts_field] or ""
+                    else:
+                        newest = r[0][ts_field] or ""
+        return n, oldest, newest
+
     stats = {}
     with Live(build_table(stats, 0, len(sites)), console=console,
               refresh_per_second=2) as live:
         for i, site in enumerate(sites):
             key = f"{site['org']}/{site['display']}"
             s = stats[key] = {"org": site["org"], "garage": site["display"],
-                              "site_id": site["site_id"], "validations": 0,
-                              "completed": 0, "frames": 0, "crops": 0,
-                              "sensors": set(), "oldest": "", "newest": "",
+                              "site_id": site["site_id"], "snapshots": 0,
+                              "validations": 0, "oldest": "", "newest": "",
                               "errors": 0}
             try:
-                validations = portal.validations_for_site(site["site_id"])
+                s["snapshots"], s["oldest"], s["newest"] = snapshot_stats(site["site_id"])
             except Exception as e:
-                log.warning("%s: validations query failed: %s", key, e)
+                log.warning("%s: snapshots query failed: %s", key, e)
                 s["errors"] += 1
-                live.update(build_table(stats, i + 1, len(sites)))
-                continue
-            s["validations"] = len(validations)
-            completed = [v for v in validations
-                         if v.get("validationState") == "completed"]
-            s["completed"] = len(completed)
-            if args.max_validations:
-                completed = completed[: args.max_validations]
-            frame_ids = set()
-            for v in completed:
-                try:
-                    data = portal.graphql(FRAMES_QUERY, {"id": v["id"]})["validation"]
-                except Exception as e:
-                    log.debug("%s validation %s failed: %s", key, v["id"], e)
-                    s["errors"] += 1
-                    continue
-                ts = data.get("createdTimestamp") or ""
-                if ts:
-                    s["oldest"] = min(s["oldest"] or ts, ts)
-                    s["newest"] = max(s["newest"], ts)
-                for node in data["validationParkingSpaces"]["nodes"]:
-                    sp = node.get("snapshotParkingSpace") or {}
-                    if not sp:
-                        continue
-                    s["crops"] += 1
-                    uid = sp.get("sensorSnapshotId") or sp.get("id")
-                    if uid:
-                        frame_ids.add(uid)
-                    sensor = (sp.get("detectedBySensor") or {}).get("configurationName")
-                    if sensor:
-                        s["sensors"].add(sensor.lower())
-            s["frames"] = len(frame_ids)
-            log.info("%s: validations=%d completed=%d frames=%d crops=%d sensors=%d",
-                     key, s["validations"], s["completed"], s["frames"], s["crops"],
-                     len(s["sensors"]))
+            try:
+                s["validations"] = portal.graphql(
+                    "query($id: Int!) { validations(condition: {siteId: $id}) { totalCount } }",
+                    {"id": site["site_id"]})["validations"]["totalCount"]
+            except Exception as e:
+                log.debug("%s: validations count failed: %s", key, e)
+            log.info("%s: snapshots=%d range=%s..%s validations=%d",
+                     key, s["snapshots"], s["oldest"], s["newest"], s["validations"])
             live.update(build_table(stats, i + 1, len(sites)))
 
-    summary = {k: {**v, "sensors": sorted(v["sensors"])} for k, v in stats.items()}
     totals = {
         "garages": len(stats),
+        "garages_with_snapshots": sum(1 for v in stats.values() if v["snapshots"]),
+        "snapshots": sum(v["snapshots"] for v in stats.values()),
         "validations": sum(v["validations"] for v in stats.values()),
-        "completed": sum(v["completed"] for v in stats.values()),
-        "full_frames": sum(v["frames"] for v in stats.values()),
-        "space_crops": sum(v["crops"] for v in stats.values()),
-        "sensors": len(set().union(*(v["sensors"] for v in stats.values())) if stats else set()),
     }
     json_file.write_text(json.dumps({"generated": stamp, "totals": totals,
-                                     "sites": summary}, indent=2))
+                                     "introspection": info, "sites": stats}, indent=2))
     log.info("totals: %s", totals)
     console.print(Panel(
-        f"garages: {totals['garages']} · validations: {totals['completed']}/{totals['validations']} completed\n"
-        f"unique full-frame snapshots: [green]{totals['full_frames']}[/green] · "
-        f"per-space crops: {totals['space_crops']} · sensors seen: {totals['sensors']}\n"
+        f"garages: {totals['garages']} ({totals['garages_with_snapshots']} with snapshots)\n"
+        f"total snapshots: [green]{totals['snapshots']}[/green] · validations: {totals['validations']}\n"
         f"summary JSON: {json_file}", title="Overview", border_style="green"))
 
 
