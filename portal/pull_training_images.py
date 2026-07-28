@@ -645,13 +645,10 @@ def main():
         manifest.db.execute(
             "CREATE TABLE IF NOT EXISTS garages (site_id INTEGER PRIMARY KEY,"
             " org TEXT, name TEXT, display TEXT, slug TEXT)")
-        # display names are not unique across orgs (two "City Center", two
-        # "Demo") — org-qualify the slug when the display name is ambiguous
-        from collections import Counter
-        _names = Counter(slugify(x["display"]) for x in sites)
+        # slugs are ALWAYS org-qualified: display names are neither unique
+        # ("City Center" x2, "Demo" x2) nor self-explanatory ("North Garage")
         for x in sites:
-            base = slugify(x["display"])
-            x["slug"] = base if _names[base] == 1 else slugify(f"{x['org']} {x['display']}")
+            x["slug"] = slugify(f"{x['org']} {x['display']}")
         with console.status("Planning: selecting diverse runs across all garages…") as st:
             for i, s in enumerate(sites, 1):
                 st.update(f"Planning [{i}/{len(sites)}] {s['slug']}…")
