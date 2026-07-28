@@ -393,48 +393,88 @@ def pull_source_a(cf, manifest, data_root, garage, gateway, start, end, interval
     return pulled
 
 
-def pull_source_b(portal, manifest, data_root, site, max_per_site, notify):
-    """Portal snapshot archive: full frames from completed validations, download once."""
-    garage = re.sub(r"[^a-z0-9_-]+", "_", site["display"].lower())
-    pulled = 0
-    try:
-        validations = [v for v in portal.validations_for_site(site["site_id"])
-                       if v.get("validationState") == "completed"]
-        log.info("%s: %d completed validations", garage, len(validations))
-    except Exception as e:
-        log.info("skip %s validations (%s)", garage, e)
-        return 0
-    for v in sorted(validations, key=lambda x: x.get("createdTimestamp", ""), reverse=True):
-        if max_per_site and pulled >= max_per_site:
+def slugify(name):
+    return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
+
+
+def select_runs(portal, site_id, per_garage):
+    """Pick a diverse subset of snapshot runs: spread over the full date span
+    AND across time-of-day buckets (night/morning/day/evening)."""
+    runs = portal.graphql(
+        "query($id: Int!) { snapshots(condition: {siteId: $id}, first: 1000)"
+        " { nodes { id runAt } } }", {"id": site_id})["snapshots"]["nodes"]
+    runs = sorted((r for r in runs if r.get("runAt")), key=lambda r: r["runAt"])
+    if len(runs) <= per_garage:
+        return runs
+    buckets = {}
+    for r in runs:
+        h = int(r["runAt"][11:13]) if len(r["runAt"]) > 12 else 12
+        buckets.setdefault(h // 6, []).append(r)
+    picked = []
+    quota = max(1, per_garage // len(buckets))
+    for b in buckets.values():  # evenly-spaced picks inside each bucket
+        step = max(1, len(b) // quota)
+        picked.extend(b[::step][:quota])
+    for r in runs:  # top up to per_garage with widest temporal stride
+        if len(picked) >= per_garage:
             break
-        notify(garage, "*", None, f"{garage} validation {v['id'][:8]}…")
+        if r not in picked:
+            picked.append(r)
+    return sorted(picked[:per_garage], key=lambda r: r["runAt"])
+
+
+def snapshot_frames(portal, snapshot_id):
+    """Unique full frames of one snapshot run: [{uuid, url, sensor}]."""
+    d = portal.graphql(
+        "query($id: UUID!) { snapshot(id: $id) { snapshotParkingSpaces { nodes {"
+        " sensorSnapshotId originalImageUrlSigned"
+        " detectedBySensor { configurationName } } } } }",
+        {"id": snapshot_id})["snapshot"]
+    frames, seen = [], set()
+    for n in d["snapshotParkingSpaces"]["nodes"]:
+        uuid, url = n.get("sensorSnapshotId"), n.get("originalImageUrlSigned")
+        if not uuid or not url or uuid in seen:
+            continue
+        seen.add(uuid)
+        sensor = ((n.get("detectedBySensor") or {}).get("configurationName") or "unknown").lower()
+        if not sensor.startswith("fv"):
+            sensor = "fv" + sensor
+        frames.append({"uuid": uuid, "url": url, "sensor": sensor})
+    return frames
+
+
+def pull_source_b(portal, manifest, data_root, site, runs, notify):
+    """Portal snapshot archive: pull the planned runs' full frames, download once."""
+    garage = site["slug"]
+    pulled = 0
+    for run in runs:
+        ts = run.get("runAt") or ""
+        notify(garage, "*", None, f"{garage} run {ts[:16]}")
         try:
-            frames = portal.validation_frames(v["id"])
+            frames = snapshot_frames(portal, run["id"])
         except Exception as e:
-            log.debug("validation %s failed: %s", v["id"], e)
+            log.warning("%s snapshot %s failed: %s", garage, run["id"], e)
+            notify(garage, "*", "error")
             continue
         for fr in frames:
             if manifest.has("portal-snapshot", fr["uuid"]):
                 notify(garage, fr["sensor"], "cached")
                 continue
             try:
-                # presigned URL: auth is embedded, use a bare session; never persist it
+                # presigned URL: auth embedded, bare session; never persist it
                 r = http_get(requests.Session(), fr["url"])
                 r.raise_for_status()
             except Exception as e:
-                log.warning("snapshot fetch failed %s: %s", fr["uuid"], e)
+                log.warning("frame fetch failed %s: %s", fr["uuid"], e)
                 notify(garage, fr["sensor"], "error")
                 continue
             dest = (data_root / "images" / garage / fr["sensor"] /
-                    fr["ts"][:4] / fr["ts"][5:7] /
+                    ts[:4] / ts[5:7] /
                     f"{fr['sensor']}-snapshot-{fr['uuid']}.jpg")
             new = store_bytes(r.content, dest, manifest, "portal-snapshot", fr["uuid"],
-                              garage, fr["sensor"], fr["ts"])
-            log.info("%s snapshot %s", "stored" if new else "dedup", fr["uuid"])
+                              garage, fr["sensor"], ts)
             notify(garage, fr["sensor"], "new" if new else "dup")
             pulled += 1
-            if max_per_site and pulled >= max_per_site:
-                break
     return pulled
 
 
@@ -454,8 +494,10 @@ def main():
                     help="min minutes between kept images per sensor (source a)")
     ap.add_argument("--max-per-sensor", type=int, default=0,
                     help="cap images per sensor per run, 0 = no cap (source a)")
-    ap.add_argument("--max-per-site", type=int, default=0,
-                    help="cap snapshots per site per run, 0 = no cap (source b)")
+    ap.add_argument("--runs-per-garage", type=int, default=12,
+                    help="diverse snapshot runs to pull per garage (source b)")
+    ap.add_argument("--plan-only", action="store_true",
+                    help="source b: build + save the diverse run selection, download nothing")
     ap.add_argument("--garages", help="comma-separated site-name filter (default: all)")
     ap.add_argument("--list-garages", action="store_true",
                     help="discover and list sites, then exit (portal token only)")
@@ -539,9 +581,34 @@ def main():
                                        args.interval_min, args.max_per_sensor, notify)
 
         if args.source in ("b", "both"):
+            import json as _json
+            plan = {}
             for s in sites:
-                total += pull_source_b(portal, manifest, args.data_root, s,
-                                       args.max_per_site, notify)
+                s["slug"] = slugify(s["display"])
+                manifest.db.execute(
+                    "CREATE TABLE IF NOT EXISTS garages (site_id INTEGER PRIMARY KEY,"
+                    " org TEXT, name TEXT, display TEXT, slug TEXT)")
+                manifest.db.execute(
+                    "INSERT OR REPLACE INTO garages VALUES (?,?,?,?,?)",
+                    (s["site_id"], s["org"], s["name"], s["display"], s["slug"]))
+                manifest.db.commit()
+                try:
+                    runs = select_runs(portal, s["site_id"], args.runs_per_garage)
+                except Exception as e:
+                    log.warning("%s: run selection failed: %s", s["slug"], e)
+                    runs = []
+                plan[s["slug"]] = {"site_id": s["site_id"],
+                                   "runs": [{"id": r["id"], "runAt": r.get("runAt", "")}
+                                            for r in runs]}
+                log.info("plan %s: %d runs %s", s["slug"], len(runs),
+                         [r.get("runAt", "")[:16] for r in runs])
+                if not args.plan_only and runs:
+                    total += pull_source_b(portal, manifest, args.data_root, s,
+                                           runs, notify)
+            plan_file = args.data_root / "snapshot_plan.json"
+            plan_file.write_text(_json.dumps(plan, indent=1))
+            console.print(f"run selection saved: [bold]{plan_file}[/bold] "
+                          f"({sum(len(p['runs']) for p in plan.values())} runs)")
 
         stats.current = ""
         live.update(stats.table())
