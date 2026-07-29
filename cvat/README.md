@@ -82,7 +82,15 @@ The queue is packaged into flat per-garage bundles by
 `python3 preannotation/export_cvat_tasks.py` → visible in the CVAT share at
 `cvat_tasks/<garage>/`.
 
-Per garage:
+**Automated (recommended)** — creates all ~39 tasks with images + preannotations
+attached, skipping any that already exist (credentials prompted, RAM only):
+
+```bash
+python3 cvat/create_tasks.py --host http://<your-ip>:8085 --project "Falcon Vision v2"
+# add --org <slug> if the project lives inside an organization
+```
+
+**Manual fallback** — per garage:
 1. New task named after the garage slug (e.g. `yaamava-north-garage`),
    assigned to the project.
 2. Files → **Connected file share** → select the `cvat_tasks/<garage>`
