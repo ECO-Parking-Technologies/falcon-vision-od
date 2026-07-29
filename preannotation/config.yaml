@@ -1,5 +1,12 @@
 use_pretrained_model: False
-model_type: grounding_dino   # open-vocab preannotation backend (or tf_efficientdet_lite0)
+model_type: sam3   # sam3 | grounding_dino | tf_efficientdet_lite0 ...
+
+# SAM 3: best drafts (sandbox verdict: far better distant-vehicle recall than
+# gdino, no wheel->motorcycle FPs). Gated weights: accept the license at
+# huggingface.co/facebook/sam3 once; auth via `read -s HF_TOKEN && export HF_TOKEN`.
+sam3:
+  model_id: facebook/sam3
+  score_threshold: 0.5   # calibrated presence score; 0.5 is the model default
 
 grounding_dino:
   model_id: IDEA-Research/grounding-dino-base
@@ -29,6 +36,9 @@ allowed_labels: # see config/label_map.yaml
 #   height: 480
 
 efficientdet_models:
+
+  sam3:
+    input_size: [640, 640]
 
   grounding_dino:
     input_size: [640, 640]

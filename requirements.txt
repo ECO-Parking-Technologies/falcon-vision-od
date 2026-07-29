@@ -24,8 +24,9 @@ pytorch-lightning>=2.0.0
 rich>=13.0
 
 
-# Preannotation (Grounding DINO backend)
-transformers>=4.53,<5
+# Preannotation (SAM 3 + Grounding DINO backends; SAM 3 needs v5.
+# facebook/sam3 weights are gated: accept the license on HF once.)
+transformers>=5.10,<6
 
 # CVAT task automation
 cvat-sdk==2.23.1

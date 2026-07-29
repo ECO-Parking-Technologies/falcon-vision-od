@@ -25,6 +25,9 @@ from rich.table import Table
 console = Console()
 log = logging.getLogger("preann")
 
+# open-vocabulary backends: no local weights, emit original COCO ids
+OPEN_VOCAB = {"grounding_dino": "Grounding DINO", "sam3": "SAM 3"}
+
 
 def setup_logging(log_file):
     logging.basicConfig(level=logging.INFO,
@@ -33,17 +36,18 @@ def setup_logging(log_file):
 
 
 class RunStats:
-    def __init__(self):
+    def __init__(self, backend_name="preannotation"):
         self.rows = {}   # garage -> dict
         self.current = ""
         self.t0 = _time.time()
+        self.backend_name = backend_name
 
     def row(self, g):
         return self.rows.setdefault(g, dict(sensors=0, done=0, frames=0,
                                             boxes=0, skipped=0))
 
     def table(self):
-        t = Table(title="Grounding DINO preannotation (one row per garage)",
+        t = Table(title=f"{self.backend_name} preannotation (one row per garage)",
                   box=_box.SIMPLE_HEAD)
         for col, style in (("garage", "cyan"), ("sensors", "cyan"),
                            ("frames", "green"), ("boxes", "green"),
@@ -269,15 +273,16 @@ def main():
             cfg[_k] = str(_root / cfg[_k])
     log_file = _root / "data" / "preannotation.log"
     setup_logging(log_file)
-    console.print(Panel(f"Detailed log: [bold]{log_file}[/bold]",
-                        title="Grounding DINO preannotation", border_style="cyan"))
 
     use_pretrained = cfg.get("use_pretrained_model", False)
     model_type = cfg["model_type"]
+    backend_name = OPEN_VOCAB.get(model_type, model_type)
+    console.print(Panel(f"Detailed log: [bold]{log_file}[/bold]",
+                        title=f"{backend_name} preannotation", border_style="cyan"))
     input_w, input_h = cfg["efficientdet_models"][model_type]["input_size"]
 
     # decide where to get weights from
-    if model_type == "grounding_dino":
+    if model_type in OPEN_VOCAB:
         pass  # open-vocabulary backend, no local weights file
     elif use_pretrained:
         model_url = cfg["efficientdet_models"][model_type].get("url")
@@ -303,10 +308,10 @@ def main():
         num_classes = len(load_label_map())
         log.info("using custom model %s num_classes=%s", model_path.name, num_classes)
 
-    if model_type == "grounding_dino":
+    if model_type in OPEN_VOCAB:
         num_classes = None
-        console.print("backend: [cyan]Grounding DINO[/cyan] (open-vocabulary)")
-        log.info("backend: grounding dino")
+        console.print(f"backend: [cyan]{backend_name}[/cyan] (open-vocabulary)")
+        log.info("backend: %s", model_type)
     else:
         log.info("model path: %s", model_path)
 
@@ -324,7 +329,14 @@ def main():
     export_cvat_labels(label_map, labels_output_path)
 
     # build the model
-    if model_type == "grounding_dino":
+    if model_type == "sam3":
+        from sam3_model import Sam3DraftModel
+        s = cfg.get("sam3", {})
+        model = Sam3DraftModel(
+            model_id=s.get("model_id", "facebook/sam3"),
+            score_threshold=s.get("score_threshold", 0.5),
+        )
+    elif model_type == "grounding_dino":
         from grounding_dino_model import GroundingDinoModel
         g = cfg.get("grounding_dino", {})
         model = GroundingDinoModel(
@@ -357,7 +369,7 @@ def main():
         console.print(f"queue: [green]{len(queue)}[/green] frames")
         log.info("queue: %d frames from %s", len(queue), qf)
 
-    stats = RunStats()
+    stats = RunStats(backend_name)
     # pre-populate rows so every garage is visible with its sensor total
     garage_dirs = {}
     for garage in garages:
@@ -406,7 +418,7 @@ def main():
                     threshold,
                     visualize=args.visualize,
                     crop_cfg=cfg.get("crop", None),
-                    pretrained_coco=use_pretrained or model_type == "grounding_dino",
+                    pretrained_coco=use_pretrained or model_type in OPEN_VOCAB,
                     garage=garage,
                     queue=sensor_queue,
                 )
