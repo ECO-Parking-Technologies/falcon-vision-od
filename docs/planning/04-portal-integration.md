@@ -109,7 +109,7 @@ Fontainebleau ~220k, Amazon ~147k, Google ~117k. Notes:
 - [ ] Puller: `garages` table from discovery; canonical-name layout; snapshots-walk for
       source B (snapshots → snapshotParkingSpaces → unique sensorSnapshotId →
       originalImageUrlSigned); copies not links.
-- [ ] First portal pull (bounded, e.g. 2 runs/garage) — canonical dirs born correct.
+- [x] **First full portal pull DONE (2026-07-29)**: 442/442 runs, 39 garages, 117,620 full frames (2.8 GB), 0 errors, org-qualified slugs, plan-first UI with per-garage %.
 - [ ] Legacy import: dedup + diversity selection → copy survivors under mapped names
       (mapping confirmed for ambiguous legacy dirs first).
 - [ ] Grounded SAM 2 runner behind the existing COCO converter; CVAT label config with
