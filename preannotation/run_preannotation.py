@@ -194,6 +194,11 @@ def main():
     args = parser.parse_args()
 
     cfg = load_config(args.config)
+    # resolve relative config paths against the repo root (script runs from preannotation/)
+    _root = Path(__file__).resolve().parent.parent
+    for _k in ("base_data_path", "queue_file", "model_file"):
+        if cfg.get(_k) and not Path(cfg[_k]).is_absolute():
+            cfg[_k] = str(_root / cfg[_k])
     use_pretrained = cfg.get("use_pretrained_model", False)
     model_type = cfg["model_type"]
     input_w, input_h = cfg["efficientdet_models"][model_type]["input_size"]
