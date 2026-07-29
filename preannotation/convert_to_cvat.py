@@ -89,6 +89,23 @@ def generate_random_color():
     return "#{:06x}".format(random.randint(0, 0xFFFFFF))
 
 
+VEHICLE_CLASSES = {"car", "truck", "bus", "motorcycle", "bicycle"}
+
+
+def _checkbox(name):
+    return {"name": name, "mutable": True, "input_type": "checkbox",
+            "default_value": "false", "values": ["false", "true"]}
+
+
+def label_attributes(name):
+    """Roadmap annotation spec (docs/road-map/Data Preparation.md):
+    Occluded on everything; InEcoParkingSpot + InMotion on vehicles only."""
+    attrs = [_checkbox("Occluded")]
+    if name in VEHICLE_CLASSES:
+        attrs = [_checkbox("InEcoParkingSpot"), _checkbox("InMotion")] + attrs
+    return attrs
+
+
 def export_cvat_labels(label_map, output_path):
     existing_labels = {}
 
@@ -120,15 +137,17 @@ def export_cvat_labels(label_map, output_path):
                 "id": idx,
                 "color": color,
                 "type": "rectangle",
-                "attributes": [],
+                "attributes": label_attributes(name),
             }
         )
 
     # Only overwrite file if new_labels are different
     if existing_labels:
-        existing_names = set(existing_labels.keys())
-        new_names = set(label["name"] for label in new_labels)
-        if existing_names == new_names:
+        unchanged = all(
+            existing_labels.get(l["name"], {}).get("attributes") == l["attributes"]
+            for l in new_labels
+        ) and set(existing_labels) == {l["name"] for l in new_labels}
+        if unchanged:
             print("[INFO] CVAT labels file already up-to-date.")
             return
 
