@@ -11,7 +11,7 @@ from config.label_loader import load_label_map
 
 
 def convert_detections_to_coco(
-    label_map, garage_name, image_dir, detections, output_path
+    label_map, garage_name, image_dir, detections, output_path, images_subset=None
 ):
     # Invert label map: name -> id
     name_to_id = {v: k for k, v in label_map.items() if v != "unlabeled"}
@@ -28,8 +28,9 @@ def convert_detections_to_coco(
     # store layout is <garage>/<sensor>/<YYYY>/<MM>/<file>
     legacy = sensor_dir.parent.name == "training_images"
     prefix = os.path.join(garage_name, "training_images") if legacy else garage_name
-    files = sorted(str(p.relative_to(sensor_dir)) for p in sensor_dir.rglob("*")
-                   if p.suffix.lower() in (".jpg", ".jpeg", ".png"))
+    files = images_subset if images_subset is not None else sorted(
+        str(p.relative_to(sensor_dir)) for p in sensor_dir.rglob("*")
+        if p.suffix.lower() in (".jpg", ".jpeg", ".png"))
     for fname in files:
         rel_path = os.path.join(prefix, sensor_dir.name, fname)
         file_to_id[fname] = image_id

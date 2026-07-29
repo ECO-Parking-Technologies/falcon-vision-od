@@ -71,7 +71,7 @@ def run_inference_on_sensor(
         sensor = Path(sensor_path).name
         images = [f for f in images if f"{garage}/{sensor}/{f}" in queue]
         if not images:
-            return []
+            return [], []
     all_detections = []
 
     for image_file in images:
@@ -169,7 +169,7 @@ def run_inference_on_sensor(
     if visualize:
         cv2.destroyAllWindows()
 
-    return all_detections
+    return all_detections, images
 
 
 def main():
@@ -296,7 +296,7 @@ def main():
         ) as pbar:
             for sensor_dir in sensor_list:
                 output_json = sensor_dir / "preannotations.coco.json"
-                detections = run_inference_on_sensor(
+                detections, processed = run_inference_on_sensor(
                     model,
                     sensor_dir,
                     input_w,
@@ -311,13 +311,17 @@ def main():
                     queue=queue,
                 )
 
+                if not processed:
+                    pbar.update(1)
+                    continue
                 if args.dry_run:
                     print(
                         f"[DRY-RUN] Skipping write of {output_json} ({len(detections)} detections)"
                     )
                 else:
                     convert_detections_to_coco(
-                        label_map, garage, sensor_dir, detections, str(output_json)
+                        label_map, garage, sensor_dir, detections, str(output_json),
+                        images_subset=processed,
                     )
 
                 pbar.update(1)
