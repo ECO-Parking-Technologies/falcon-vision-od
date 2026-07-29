@@ -5,9 +5,19 @@ project/annotations are retired — start from a fresh CVAT install.
 
 ## 0. Clean slate (if an old CVAT exists)
 
+With the old clone still around:
+
 ```bash
 cd <old-cvat-clone> && docker compose down -v   # -v deletes volumes = old annotations
 cd .. && rm -rf <old-cvat-clone>
+```
+
+Without the clone (containers/volumes orphaned):
+
+```bash
+docker ps -a --format '{{.Names}}' | grep '^cvat' | xargs -r docker rm -f
+docker volume ls -q | grep -i cvat | xargs -r docker volume rm
+docker network rm cvat_cvat 2>/dev/null || true
 ```
 
 ## 1. Install CVAT
@@ -39,6 +49,15 @@ export CVAT_HOST=<your_host_ipv4>   # e.g. 192.168.1.30
 export CVAT_VERSION=v2.23.1
 docker compose up -d                # UI at http://<host>:8085
 ```
+
+### Troubleshooting
+
+- **404 on every page**: either the Host mismatch above, or traefik can't talk
+  to Docker — check `docker logs traefik` for `client version … is too old`
+  (modern Docker engines reject traefik ≤ v3.1's hardcoded API; the patch pins
+  `traefik:v3`, don't revert it).
+- **Admin panel**: make your first account a superuser with
+  `docker exec -it cvat_server python3 ~/manage.py createsuperuser`.
 
 ## 2. Project creation (labels: shapes, attributes, AND tags)
 
