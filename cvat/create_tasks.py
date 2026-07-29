@@ -21,8 +21,13 @@ from rich.prompt import Prompt
 from rich.table import Table
 from rich import box
 
-from cvat_sdk import make_client
-from cvat_sdk.core.proxies.tasks import ResourceType
+try:
+    from cvat_sdk import make_client
+    from cvat_sdk.core.proxies.tasks import ResourceType
+except ImportError:
+    sys.exit("cvat_sdk not found — activate the MAIN venv first:\n"
+             "  source falcon-vision-od-venv/bin/activate\n"
+             "(it's in requirements.txt; the export venv doesn't have it)")
 
 console = Console()
 
