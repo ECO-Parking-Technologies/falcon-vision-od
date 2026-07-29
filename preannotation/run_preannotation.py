@@ -187,6 +187,16 @@ def main():
         help="Run inference without writing preannotations files",
     )
     parser.add_argument(
+        "--all-frames",
+        action="store_true",
+        help="ignore queue_file: preannotate every frame in the store",
+    )
+    parser.add_argument(
+        "--skip-existing",
+        action="store_true",
+        help="skip sensors whose preannotations.coco.json already exists (resume)",
+    )
+    parser.add_argument(
         "--no-class-filtering",
         action="store_true",
         help="Disable filtering of allowed labels (use all labels in label_map)",
@@ -277,7 +287,7 @@ def main():
 
     # optional annotation queue: only process listed frames
     queue = None
-    qf = cfg.get("queue_file")
+    qf = None if args.all_frames else cfg.get("queue_file")
     if qf:
         import json as _json
         qdata = _json.loads(Path(qf).read_text())
@@ -297,6 +307,9 @@ def main():
         ) as pbar:
             for sensor_dir in sensor_list:
                 output_json = sensor_dir / "preannotations.coco.json"
+                if args.skip_existing and output_json.exists():
+                    pbar.update(1)
+                    continue
                 detections, processed = run_inference_on_sensor(
                     model,
                     sensor_dir,
