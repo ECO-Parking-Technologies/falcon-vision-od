@@ -45,10 +45,14 @@ needed.
 
 # Admin notes (Emilio)
 
-- **Cloudflare tunnel**: point it at `localhost:8085`. Then Traefik MUST know
-  the public hostname: `export CVAT_HOST=<tunnel-hostname>` +
-  `docker compose up -d` in the cvat clone, or all tunnel traffic 404s.
-  Single-host routing: after switching, use the tunnel URL yourself too.
+- **Cloudflare tunnel** (verified setup): route the public hostname to
+  `http://<lan-ip>:8085` and set the route's **HTTP Host Header** (HTTP
+  Settings) to that same `<lan-ip>` — cloudflared rewrites the Host so
+  Traefik's existing rule matches; tunnel AND direct LAN access both work.
+  Fallback if login via the tunnel ever throws CSRF/"origin checking failed":
+  make the tunnel hostname canonical instead — `export CVAT_HOST=<tunnel-hostname>`
+  + `docker compose up -d` in the cvat clone (LAN IP then 404s; use the tunnel
+  URL everywhere).
 - **Accounts**: annotators self-register at the URL. Assign tasks: open task →
   Assignee field. Set stage `annotation`.
 - **Progress**: Tasks page shows per-task completion; Analytics has per-user
