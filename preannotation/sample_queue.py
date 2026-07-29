@@ -26,10 +26,17 @@ def dhash(path):
     return sum(1 << i for i, v in enumerate((small[:, 1:] > small[:, :-1]).flatten()) if v)
 
 
-def hour_bucket(ts):  # night / morning / day / evening
+def hour_bucket(ts, tz=None):  # night / morning / day / evening, GARAGE-LOCAL time
+    """Manifest timestamps are UTC; garages span US timezones (UTC-4..-8),
+    so buckets use the garage's IANA tz from the portal when available."""
     try:
+        if tz:
+            from datetime import datetime, timezone
+            from zoneinfo import ZoneInfo
+            dt = datetime.fromisoformat(ts[:19]).replace(tzinfo=timezone.utc)
+            return dt.astimezone(ZoneInfo(tz)).hour // 6
         return int(ts[11:13]) // 6
-    except (ValueError, IndexError):
+    except Exception:
         return 2
 
 
@@ -53,6 +60,11 @@ def main():
     images_root = (args.data_root / "images").resolve()
 
     db = sqlite3.connect(f"file:{args.data_root/'manifest.sqlite'}?mode=ro", uri=True)
+    try:
+        tz_by_slug = dict(db.execute("select slug, tz from garages"))
+    except sqlite3.OperationalError:
+        tz_by_slug = {}
+        print("[WARN] garages table has no tz yet (populated at next pull) — using UTC hours")
     rows = db.execute(
         "select garage, sensor, ts, path from images where source='portal-snapshot'"
         " order by garage, sensor, ts").fetchall()
@@ -73,7 +85,7 @@ def main():
         for s, frames in sorted(sensors.items()):
             buckets = defaultdict(list)
             for ts, p in frames:
-                buckets[hour_bucket(ts)].append((ts, p))
+                buckets[hour_bucket(ts, tz_by_slug.get(g))].append((ts, p))
             quota = {b: max(1, per_sensor // len(buckets)) for b in buckets}
             got = []
             for b, items in sorted(buckets.items()):

@@ -185,12 +185,13 @@ class PortalClient:
         for org in orgs:
             nodes = self.graphql(
                 "query($id: Int!) { sites(condition: {organizationId: $id, isDeleted: false})"
-                " { nodes { id name displayName } } }",
+                " { nodes { id name displayName timeZoneName } } }",
                 {"id": org["id"]},
             )["sites"]["nodes"]
             for s in nodes:
                 sites.append({"org": org["name"], "site_id": s["id"],
-                              "name": s["name"], "display": s.get("displayName") or s["name"]})
+                              "name": s["name"], "display": s.get("displayName") or s["name"],
+                              "tz": s.get("timeZoneName") or ""})
         return sites
 
     def validations_for_site(self, site_id: int):
@@ -645,6 +646,10 @@ def main():
         manifest.db.execute(
             "CREATE TABLE IF NOT EXISTS garages (site_id INTEGER PRIMARY KEY,"
             " org TEXT, name TEXT, display TEXT, slug TEXT)")
+        try:
+            manifest.db.execute("ALTER TABLE garages ADD COLUMN tz TEXT")
+        except Exception:
+            pass  # column exists
         # slugs are ALWAYS org-qualified: display names are neither unique
         # ("City Center" x2, "Demo" x2) nor self-explanatory ("North Garage")
         for x in sites:
@@ -653,8 +658,9 @@ def main():
             for i, s in enumerate(sites, 1):
                 st.update(f"Planning [{i}/{len(sites)}] {s['slug']}…")
                 manifest.db.execute(
-                    "INSERT OR REPLACE INTO garages VALUES (?,?,?,?,?)",
-                    (s["site_id"], s["org"], s["name"], s["display"], s["slug"]))
+                    "INSERT OR REPLACE INTO garages VALUES (?,?,?,?,?,?)",
+                    (s["site_id"], s["org"], s["name"], s["display"], s["slug"],
+                     s.get("tz", "")))
                 manifest.db.commit()
                 try:
                     runs = select_runs(portal, s["site_id"], args.runs_per_garage)
