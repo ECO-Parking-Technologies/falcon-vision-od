@@ -104,6 +104,10 @@ python3 cvat/create_tasks.py --host http://<your-ip>:8085 --project "Falcon Visi
 
 ## 4. The audit pass (what the human actually does)
 
+**Read [docs/annotation-guidelines.md](../docs/annotation-guidelines.md) first** —
+it answers every "do I box this?" judgment call (distant cars: yes if
+identifiable; smudges: no) and lists the known pre-annotation failure patterns.
+
 Boxes are pre-drawn. Per image:
 - Fix/delete wrong boxes (common: duplicate person boxes, car↔truck mixups,
   wheel→motorcycle); draw any missed objects. Keep boxes **tight, no padding**.
