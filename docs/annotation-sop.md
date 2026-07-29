@@ -53,8 +53,11 @@ needed.
   make the tunnel hostname canonical instead — `export CVAT_HOST=<tunnel-hostname>`
   + `docker compose up -d` in the cvat clone (LAN IP then 404s; use the tunnel
   URL everywhere).
-- **Accounts**: annotators self-register at the URL. Assign tasks: open task →
-  Assignee field. Set stage `annotation`.
+- **Accounts**: annotators self-register at the URL. **The admin account must be
+  a CVAT superuser** to see other users in the Assignee dropdown (personal-
+  workspace users only see themselves). Promote once:
+  `docker exec cvat_server bash -c 'python3 ~/manage.py shell -c "from django.contrib.auth.models import User; u=User.objects.get(username=YOURNAME); u.is_superuser=True; u.is_staff=True; u.save()"'`
+  Then assign tasks: open task → Assignee field. Set stage `annotation`.
 - **Progress**: Tasks page shows per-task completion; Analytics has per-user
   stats. Spot-check early work from each new annotator against the guidelines
   (especially box tightness and the eco-spot flag) before they do volume.
