@@ -101,6 +101,24 @@ python3 cvat/create_tasks.py --host http://<your-ip>:8085 --project "Falcon Visi
 # add --org <slug> if the project lives inside an organization
 ```
 
+**Through the Cloudflare tunnel** (the local IP 404s once `CVAT_HOST` is the
+tunnel hostname): the SDK cannot click through the Zero Trust login page, so
+use an **Access service token** instead of exposing CVAT publicly — Zero Trust
+→ Access → Service Auth → create token, then add a "Service Auth" policy for
+the CVAT application. Run any SDK script with `--cf-access` and paste the
+token id/secret when prompted (RAM only, never stored):
+
+```bash
+python3 cvat/create_tasks.py --host https://<tunnel-host> --cf-access --project "Falcon Vision v2"
+python3 cvat/purge_tasks.py  --host https://<tunnel-host> --cf-access
+```
+
+**If the tunnel hostname ever changes**: update BOTH `CVAT_HOST` (and restart
+compose) and `CSRF_TRUSTED_ORIGINS` in docker-compose.yml, or the UI reads
+fine but every write fails CSRF origin checking. CVAT must stay behind Zero
+Trust — it serves customer CCTV frames and allows open self-registration;
+never expose it on an ungated public hostname.
+
 **Manual fallback** — per garage:
 1. New task named after the garage slug (e.g. `yaamava-north-garage`),
    assigned to the project.

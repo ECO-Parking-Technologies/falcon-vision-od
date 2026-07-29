@@ -22,12 +22,13 @@ from rich.table import Table
 from rich import box
 
 try:
-    from cvat_sdk import make_client
     from cvat_sdk.core.proxies.tasks import ResourceType
 except ImportError:
     sys.exit("cvat_sdk not found — activate the MAIN venv first:\n"
              "  source falcon-vision-od-venv/bin/activate\n"
              "(it's in requirements.txt; the export venv doesn't have it)")
+
+from cvat_access import open_client
 
 console = Console()
 
@@ -69,6 +70,9 @@ def main():
     ap.add_argument("--org", default=None,
                     help="organization slug (needed if the project lives in one)")
     ap.add_argument("--garages", help="comma-separated subset (default: all bundles)")
+    ap.add_argument("--cf-access", action="store_true",
+                    help="authenticate through Cloudflare Access with a "
+                         "service token (prompted, RAM only)")
     args = ap.parse_args()
 
     user = Prompt.ask("[cyan]CVAT username[/cyan]", console=console)
@@ -81,7 +85,7 @@ def main():
     if not bundles:
         sys.exit(f"no task bundles under {args.tasks_dir}")
 
-    with make_client(args.host, credentials=(user, password)) as client:
+    with open_client(args.host, user, password, args.cf_access) as client:
         if args.org:
             client.organization_slug = args.org
         projects = [p for p in client.projects.list() if p.name == args.project]
