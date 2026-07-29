@@ -1,0 +1,252 @@
+[
+  {
+    "name": "person",
+    "id": 1,
+    "color": "#60536f",
+    "type": "rectangle",
+    "attributes": [
+      {
+        "name": "Occluded",
+        "mutable": true,
+        "input_type": "checkbox",
+        "default_value": "false",
+        "values": [
+          "false",
+          "true"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "bicycle",
+    "id": 2,
+    "color": "#8d4f7f",
+    "type": "rectangle",
+    "attributes": [
+      {
+        "name": "InEcoParkingSpot",
+        "mutable": true,
+        "input_type": "checkbox",
+        "default_value": "false",
+        "values": [
+          "false",
+          "true"
+        ]
+      },
+      {
+        "name": "InMotion",
+        "mutable": true,
+        "input_type": "checkbox",
+        "default_value": "false",
+        "values": [
+          "false",
+          "true"
+        ]
+      },
+      {
+        "name": "Occluded",
+        "mutable": true,
+        "input_type": "checkbox",
+        "default_value": "false",
+        "values": [
+          "false",
+          "true"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "car",
+    "id": 3,
+    "color": "#1a773e",
+    "type": "rectangle",
+    "attributes": [
+      {
+        "name": "InEcoParkingSpot",
+        "mutable": true,
+        "input_type": "checkbox",
+        "default_value": "false",
+        "values": [
+          "false",
+          "true"
+        ]
+      },
+      {
+        "name": "InMotion",
+        "mutable": true,
+        "input_type": "checkbox",
+        "default_value": "false",
+        "values": [
+          "false",
+          "true"
+        ]
+      },
+      {
+        "name": "Occluded",
+        "mutable": true,
+        "input_type": "checkbox",
+        "default_value": "false",
+        "values": [
+          "false",
+          "true"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "motorcycle",
+    "id": 4,
+    "color": "#ee3b07",
+    "type": "rectangle",
+    "attributes": [
+      {
+        "name": "InEcoParkingSpot",
+        "mutable": true,
+        "input_type": "checkbox",
+        "default_value": "false",
+        "values": [
+          "false",
+          "true"
+        ]
+      },
+      {
+        "name": "InMotion",
+        "mutable": true,
+        "input_type": "checkbox",
+        "default_value": "false",
+        "values": [
+          "false",
+          "true"
+        ]
+      },
+      {
+        "name": "Occluded",
+        "mutable": true,
+        "input_type": "checkbox",
+        "default_value": "false",
+        "values": [
+          "false",
+          "true"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "bus",
+    "id": 6,
+    "color": "#0603ad",
+    "type": "rectangle",
+    "attributes": [
+      {
+        "name": "InEcoParkingSpot",
+        "mutable": true,
+        "input_type": "checkbox",
+        "default_value": "false",
+        "values": [
+          "false",
+          "true"
+        ]
+      },
+      {
+        "name": "InMotion",
+        "mutable": true,
+        "input_type": "checkbox",
+        "default_value": "false",
+        "values": [
+          "false",
+          "true"
+        ]
+      },
+      {
+        "name": "Occluded",
+        "mutable": true,
+        "input_type": "checkbox",
+        "default_value": "false",
+        "values": [
+          "false",
+          "true"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "truck",
+    "id": 8,
+    "color": "#098852",
+    "type": "rectangle",
+    "attributes": [
+      {
+        "name": "InEcoParkingSpot",
+        "mutable": true,
+        "input_type": "checkbox",
+        "default_value": "false",
+        "values": [
+          "false",
+          "true"
+        ]
+      },
+      {
+        "name": "InMotion",
+        "mutable": true,
+        "input_type": "checkbox",
+        "default_value": "false",
+        "values": [
+          "false",
+          "true"
+        ]
+      },
+      {
+        "name": "Occluded",
+        "mutable": true,
+        "input_type": "checkbox",
+        "default_value": "false",
+        "values": [
+          "false",
+          "true"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "glare",
+    "id": null,
+    "color": "#49dab1",
+    "type": "tag",
+    "attributes": []
+  },
+  {
+    "name": "low-light",
+    "id": null,
+    "color": "#27c798",
+    "type": "tag",
+    "attributes": []
+  },
+  {
+    "name": "rain",
+    "id": null,
+    "color": "#ec45f1",
+    "type": "tag",
+    "attributes": []
+  },
+  {
+    "name": "snow",
+    "id": null,
+    "color": "#5e7958",
+    "type": "tag",
+    "attributes": []
+  },
+  {
+    "name": "dirty-lens",
+    "id": null,
+    "color": "#134086",
+    "type": "tag",
+    "attributes": []
+  },
+  {
+    "name": "obstruction",
+    "id": null,
+    "color": "#840cdc",
+    "type": "tag",
+    "attributes": []
+  }
+]

@@ -247,7 +247,8 @@ def main():
     threshold = cfg.get("threshold", 0.25)
 
     # export CVAT label config
-    labels_output_path = Path(cfg["base_data_path"]) / "cvat_labels.json"
+    # tracked in-repo: the CVAT label spec is configuration, not data
+    labels_output_path = _root / "config" / "cvat_labels.json"
     export_cvat_labels(label_map, labels_output_path)
 
     # build the model
