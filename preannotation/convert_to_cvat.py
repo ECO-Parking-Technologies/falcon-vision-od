@@ -91,6 +91,10 @@ def generate_random_color():
 
 VEHICLE_CLASSES = {"car", "truck", "bus", "motorcycle", "bicycle"}
 
+# image-level condition tags needing human judgment (roadmap Data Preparation);
+# garage/sensor/time-of-day are NOT tags — they derive from filenames/manifest
+CONDITION_TAGS = ["glare", "rain", "snow", "dirty-lens", "obstruction"]
+
 
 def _checkbox(name):
     return {"name": name, "mutable": True, "input_type": "checkbox",
@@ -140,6 +144,11 @@ def export_cvat_labels(label_map, output_path):
                 "attributes": label_attributes(name),
             }
         )
+
+    for tag in CONDITION_TAGS:
+        color = existing_labels.get(tag, {}).get("color", generate_random_color())
+        new_labels.append({"name": tag, "id": None, "color": color,
+                           "type": "tag", "attributes": []})
 
     # Only overwrite file if new_labels are different
     if existing_labels:
