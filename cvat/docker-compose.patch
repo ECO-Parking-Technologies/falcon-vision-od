@@ -1,0 +1,58 @@
+diff --git a/docker-compose.yml b/docker-compose.yml
+index b00ff6ba3..94429fdcd 100644
+--- a/docker-compose.yml
++++ b/docker-compose.yml
+@@ -106,6 +106,7 @@ services:
+        - cvat_data:/home/django/data
+        - cvat_keys:/home/django/keys
+        - cvat_logs:/home/django/logs
++      - cvat_share:/home/django/share:ro
+    networks:
+        cvat:
+        aliases:
+@@ -141,6 +142,7 @@ services:
+        - cvat_data:/home/django/data
+        - cvat_keys:/home/django/keys
+        - cvat_logs:/home/django/logs
++      - cvat_share:/home/django/share:ro
+    networks:
+        - cvat
+@@ -157,6 +159,7 @@ services:
+        - cvat_data:/home/django/data
+        - cvat_keys:/home/django/keys
+        - cvat_logs:/home/django/logs
++      - cvat_share:/home/django/share:ro
+    networks:
+        - cvat
+@@ -173,6 +176,7 @@ services:
+        - cvat_data:/home/django/data
+        - cvat_keys:/home/django/keys
+        - cvat_logs:/home/django/logs
++      - cvat_share:/home/django/share:ro
+    networks:
+        - cvat
+@@ -237,6 +241,7 @@ services:
+        - cvat_data:/home/django/data
+        - cvat_keys:/home/django/keys
+        - cvat_logs:/home/django/logs
++      - cvat_share:/home/django/share:ro
+    networks:
+        - cvat
+@@ -259,7 +264,7 @@ services:
+    container_name: traefik
+    restart: always
+    ports:
+-      - 8080:8080
++      - 8085:8080
+        - 8090:8090
+    environment:
+        CVAT_HOST: ${CVAT_HOST:-localhost}
+@@ -407,6 +412,11 @@ volumes:
+    cvat_inmem_db:
+    cvat_events_db:
+    cvat_cache_db:
++  cvat_share:
++    driver_opts:
++      type: none
++      device: /media/lopezemi/Expansion/falcon-vision-od-data
++      o: bind

@@ -18,20 +18,20 @@ git clone https://github.com/cvat-ai/cvat.git && cd cvat
 git checkout v2.23.1
 ```
 
-Edit `docker-compose.yml` exactly as before (see git history of this file for the
-full diff): add `- cvat_share:/home/django/share:ro` to the volume list of the
-5 cvat services, change traefik port `8080:8080` → `8085:8080`, and define the
-share volume — **now pointing at the unified store**:
+Apply the compose changes from the patch in this directory (share mount into the
+5 cvat services, traefik port 8085, `cvat_share` volume bound to the unified
+store at `/media/lopezemi/Expansion/falcon-vision-od-data`):
 
-```yaml
-  cvat_share:
-    driver_opts:
-      type: none
-      device: /media/lopezemi/Expansion/falcon-vision-od-data
-      o: bind
+```bash
+git apply /home/lopezemi/projects/falcon/falcon-vision-od/cvat/docker-compose.patch
 ```
 
-Start:
+(If the patch doesn't apply cleanly on a different CVAT version, open
+[docker-compose.patch](docker-compose.patch) and make the same edits by hand —
+it's small and readable.)
+
+Start (enable Docker first if it isn't running:
+`sudo systemctl enable --now docker`):
 
 ```bash
 export CVAT_HOST=<your_host_ipv4>   # e.g. 192.168.1.30
