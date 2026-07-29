@@ -45,14 +45,14 @@ needed.
 
 # Admin notes (Emilio)
 
-- **Cloudflare tunnel** (verified setup): route the public hostname to
-  `http://<lan-ip>:8085` and set the route's **HTTP Host Header** (HTTP
-  Settings) to that same `<lan-ip>` — cloudflared rewrites the Host so
-  Traefik's existing rule matches; tunnel AND direct LAN access both work.
-  Fallback if login via the tunnel ever throws CSRF/"origin checking failed":
-  make the tunnel hostname canonical instead — `export CVAT_HOST=<tunnel-hostname>`
-  + `docker compose up -d` in the cvat clone (LAN IP then 404s; use the tunnel
-  URL everywhere).
+- **Cloudflare tunnel** (verified setup): the tunnel hostname is CANONICAL.
+  Route the public hostname to `http://<lan-ip>:8085` with **HTTP Host Header
+  left empty**, and start CVAT with `CVAT_HOST=<tunnel-hostname>`
+  (`docker compose up -d` in the cvat clone). Everyone — including the admin —
+  uses the tunnel URL; the LAN IP 404s by design.
+  (History: a Host-header rewrite to the LAN IP works for BROWSING but fails
+  all writes with CSRF "origin checking failed" — Django trusts only
+  CVAT_HOST-derived origins. Don't use the rewrite.)
 - **Accounts**: annotators self-register at the URL. **The admin account must be
   a CVAT superuser** to see other users in the Assignee dropdown (personal-
   workspace users only see themselves). Promote once:
