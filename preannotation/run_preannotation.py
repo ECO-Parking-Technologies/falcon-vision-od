@@ -194,7 +194,8 @@ def main():
     parser.add_argument(
         "--skip-existing",
         action="store_true",
-        help="skip sensors whose preannotations.coco.json already exists (resume)",
+        help="incremental resume: only process frames not already in a sensor's "
+             "preannotations.coco.json, merging new results in",
     )
     parser.add_argument(
         "--no-class-filtering",
@@ -307,9 +308,26 @@ def main():
         ) as pbar:
             for sensor_dir in sensor_list:
                 output_json = sensor_dir / "preannotations.coco.json"
+                sensor_queue = queue
+                existing_coco = None
                 if args.skip_existing and output_json.exists():
-                    pbar.update(1)
-                    continue
+                    import json as _json
+                    existing_coco = _json.loads(output_json.read_text())
+                    done = {im["file_name"] for im in existing_coco["images"]}
+                    prefix = f"{garage}/{sensor_dir.name}/"
+                    all_frames = {
+                        f"{prefix}{p.relative_to(sensor_dir)}"
+                        for p in sensor_dir.rglob("*")
+                        if p.suffix.lower() in (".png", ".jpg", ".jpeg")
+                    }
+                    # file_name entries use the same garage/sensor/rel format
+                    new = {f for f in all_frames if f not in done}
+                    if queue is not None:
+                        new &= queue
+                    if not new:
+                        pbar.update(1)
+                        continue
+                    sensor_queue = new
                 detections, processed = run_inference_on_sensor(
                     model,
                     sensor_dir,
@@ -322,7 +340,7 @@ def main():
                     crop_cfg=cfg.get("crop", None),
                     pretrained_coco=use_pretrained or model_type == "grounding_dino",
                     garage=garage,
-                    queue=queue,
+                    queue=sensor_queue,
                 )
 
                 if not processed:
@@ -337,6 +355,22 @@ def main():
                         label_map, garage, sensor_dir, detections, str(output_json),
                         images_subset=processed,
                     )
+                    if existing_coco is not None:
+                        # merge the fresh frames into the pre-existing file
+                        import json as _json
+                        fresh = _json.loads(Path(output_json).read_text())
+                        img_off = max((im["id"] for im in existing_coco["images"]),
+                                      default=0)
+                        ann_off = max((a["id"] for a in existing_coco["annotations"]),
+                                      default=0)
+                        for im in fresh["images"]:
+                            im["id"] += img_off
+                        for a in fresh["annotations"]:
+                            a["id"] += ann_off
+                            a["image_id"] += img_off
+                        existing_coco["images"] += fresh["images"]
+                        existing_coco["annotations"] += fresh["annotations"]
+                        Path(output_json).write_text(_json.dumps(existing_coco, indent=2))
 
                 pbar.update(1)
 
