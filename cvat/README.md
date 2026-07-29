@@ -37,6 +37,13 @@ everything — and `cvat_share` bound to the unified store):
 git apply /home/lopezemi/projects/falcon/falcon-vision-od/cvat/docker-compose.patch
 ```
 
+The patch also bind-mounts [production_settings.py](production_settings.py)
+into cvat_server and sets `CSRF_TRUSTED_ORIGINS` — required for any https
+front (Cloudflare tunnel): stock CVAT production settings omit it and every
+write fails CSRF origin checking. **After applying, edit two things in
+docker-compose.yml for your environment**: the absolute path of the mounted
+settings file, and the hostnames in `CSRF_TRUSTED_ORIGINS`.
+
 (If the patch doesn't apply cleanly on a different CVAT version, open
 [docker-compose.patch](docker-compose.patch) and make the same edits by hand —
 it's small and readable.)
@@ -58,6 +65,10 @@ docker compose up -d                # UI at http://<host>:8085
   `traefik:v3` plus `TRAEFIK_CORE_DEFAULTRULESYNTAX: v2` — cvat's router rules use
   v2 matcher syntax; without the flag the API router drops and the UI crashes
   with `r.map is not a function` / nginx 405. Don't revert either).
+- **Reads work but saves/assignments fail** with `CSRF Failed: Origin checking
+  failed`: the `CSRF_TRUSTED_ORIGINS` env doesn't include the scheme+host in
+  the error message — add it (https AND http forms) and
+  `docker compose up -d cvat_server`.
 - **Admin panel**: make your first account a superuser with
   `docker exec -it cvat_server python3 ~/manage.py createsuperuser`.
 
