@@ -55,7 +55,9 @@ docker compose up -d                # UI at http://<host>:8085
 - **404 on every page**: either the Host mismatch above, or traefik can't talk
   to Docker — check `docker logs traefik` for `client version … is too old`
   (modern Docker engines reject traefik ≤ v3.1's hardcoded API; the patch pins
-  `traefik:v3`, don't revert it).
+  `traefik:v3` plus `TRAEFIK_CORE_DEFAULTRULESYNTAX: v2` — cvat's router rules use
+  v2 matcher syntax; without the flag the API router drops and the UI crashes
+  with `r.map is not a function` / nginx 405. Don't revert either).
 - **Admin panel**: make your first account a superuser with
   `docker exec -it cvat_server python3 ~/manage.py createsuperuser`.
 

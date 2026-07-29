@@ -1,5 +1,5 @@
 diff --git a/docker-compose.yml b/docker-compose.yml
-index b00ff6ba3..834fabc22 100644
+index b00ff6ba3..2322a2bb5 100644
 --- a/docker-compose.yml
 +++ b/docker-compose.yml
 @@ -106,6 +106,7 @@ services:
@@ -74,7 +74,7 @@ index b00ff6ba3..834fabc22 100644
      networks:
        - cvat
  
-@@ -255,11 +264,11 @@ services:
+@@ -255,14 +264,15 @@ services:
        - cvat
  
    traefik:
@@ -88,7 +88,11 @@ index b00ff6ba3..834fabc22 100644
        - 8090:8090
      environment:
        CVAT_HOST: ${CVAT_HOST:-localhost}
-@@ -407,6 +416,11 @@ volumes:
++      TRAEFIK_CORE_DEFAULTRULESYNTAX: v2   # cvat's router rules use v2 matcher syntax
+       DJANGO_LOG_VIEWER_HOST: grafana
+       DJANGO_LOG_VIEWER_PORT: 3000
+ 
+@@ -407,6 +417,11 @@ volumes:
    cvat_inmem_db:
    cvat_events_db:
    cvat_cache_db:
