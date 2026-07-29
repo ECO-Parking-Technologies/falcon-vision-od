@@ -10,8 +10,8 @@ pretrained_backbone: True
 
 base_data_path: data/images   # the unified store (portal-canonical garages)
 
-garages:
-  - carmel-civic-square-civic-square
+garages: all   # auto-discover from the store; or list specific slugs
+queue_file: data/annotation_queue_phase1.json   # only process sampled frames (comment out for all)
 
 threshold: 0.25   # gdino garage frames score 0.25-0.45
 

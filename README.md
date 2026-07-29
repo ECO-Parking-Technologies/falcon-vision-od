@@ -57,6 +57,14 @@ Images land in `data/images/<garage>/<sensor>/…` with a manifest. See
 
 ## Preannotation
 
+Sample a diverse annotation queue from the store, then generate first-draft
+boxes with Grounding DINO (garages auto-discovered):
+
+```bash
+python3 preannotation/sample_queue.py --target 5000
+```
+
+
 Runs a model over garage images and writes COCO 1.0 annotation files per sensor for CVAT import:
 
 ```bash

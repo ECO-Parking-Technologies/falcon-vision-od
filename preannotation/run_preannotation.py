@@ -48,6 +48,8 @@ def run_inference_on_sensor(
     visualize=None,
     crop_cfg=None,
     pretrained_coco=False,
+    garage=None,
+    queue=None,
 ):
     # Model detections carry 1-based class ids (background = 0), which for
     # custom models match the 1-based contiguous ids from remap_label_map.
@@ -65,6 +67,11 @@ def run_inference_on_sensor(
     images = sorted(
         str(p.relative_to(sensor_path)) for p in Path(sensor_path).rglob("*")
         if p.suffix.lower() in (".png", ".jpg", ".jpeg"))
+    if queue is not None:
+        sensor = Path(sensor_path).name
+        images = [f for f in images if f"{garage}/{sensor}/{f}" in queue]
+        if not images:
+            return []
     all_detections = []
 
     for image_file in images:
@@ -256,7 +263,22 @@ def main():
         )
 
     # iterate garages/sensors
-    for garage in cfg["garages"]:
+    garages = cfg.get("garages") or "all"
+    if garages == "all":  # auto-discover from the store layout
+        base = Path(cfg["base_data_path"])
+        garages = sorted(p.name for p in base.iterdir() if p.is_dir())
+        print(f"[INFO] auto-discovered {len(garages)} garages under {base}")
+
+    # optional annotation queue: only process listed frames
+    queue = None
+    qf = cfg.get("queue_file")
+    if qf:
+        import json as _json
+        qdata = _json.loads(Path(qf).read_text())
+        queue = {p for paths in qdata.values() for p in paths}
+        print(f"[INFO] annotation queue: {len(queue)} frames from {qf}")
+
+    for garage in garages:
         garage_dir = Path(cfg["base_data_path"]) / garage / "training_images"
         if not garage_dir.exists():  # store layout: sensors directly under garage
             garage_dir = Path(cfg["base_data_path"]) / garage
@@ -280,6 +302,8 @@ def main():
                     visualize=args.visualize,
                     crop_cfg=cfg.get("crop", None),
                     pretrained_coco=use_pretrained or model_type == "grounding_dino",
+                    garage=garage,
+                    queue=queue,
                 )
 
                 if args.dry_run:
