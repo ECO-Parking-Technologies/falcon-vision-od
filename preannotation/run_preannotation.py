@@ -10,10 +10,67 @@ import torch
 import yaml
 from convert_to_cvat import *
 from efficient_det_model import EfficientDetModel
-from tqdm import tqdm
 from utils import convert_detections, extract_sensor_and_camera
 
 from config.label_loader import load_label_map, remap_label_map
+
+import logging
+import time as _time
+from rich import box as _box
+from rich.console import Console
+from rich.live import Live
+from rich.panel import Panel
+from rich.table import Table
+
+console = Console()
+log = logging.getLogger("preann")
+
+
+def setup_logging(log_file):
+    logging.basicConfig(level=logging.INFO,
+                        format="%(asctime)s [%(levelname)s] %(message)s",
+                        handlers=[logging.FileHandler(log_file)], force=True)
+
+
+class RunStats:
+    def __init__(self):
+        self.rows = {}   # garage -> dict
+        self.current = ""
+        self.t0 = _time.time()
+
+    def row(self, g):
+        return self.rows.setdefault(g, dict(sensors=0, done=0, frames=0,
+                                            boxes=0, skipped=0))
+
+    def table(self):
+        t = Table(title="Grounding DINO preannotation (one row per garage)",
+                  box=_box.SIMPLE_HEAD)
+        for col, style in (("garage", "cyan"), ("sensors", "cyan"),
+                           ("frames", "green"), ("boxes", "green"),
+                           ("skipped", "dim")):
+            t.add_column(col, style=style,
+                         justify="left" if col == "garage" else "right")
+        tot = dict(sensors=0, done=0, frames=0, boxes=0, skipped=0)
+        for g in sorted(self.rows):
+            r = self.rows[g]
+            pct = 100 * (r["done"] + r["skipped"]) // r["sensors"] if r["sensors"] else 0
+            t.add_row(g, f"{r['done'] + r['skipped']}/{r['sensors']} ({pct}%)",
+                      str(r["frames"]), str(r["boxes"]), str(r["skipped"]))
+            for k in tot:
+                tot[k] += r[k]
+        if self.rows:
+            t.add_section()
+            tpct = (100 * (tot["done"] + tot["skipped"]) // tot["sensors"]
+                    if tot["sensors"] else 0)
+            t.add_row("OVERALL", f"{tot['done'] + tot['skipped']}/{tot['sensors']} ({tpct}%)",
+                      str(tot["frames"]), str(tot["boxes"]), str(tot["skipped"]))
+        rate = tot["frames"] / max(1e-9, _time.time() - self.t0)
+        cap = self.current
+        if tot["frames"]:
+            cap += f"   ·   {rate:.1f} frames/s"
+        if cap:
+            t.caption = cap
+        return t
 
 
 def load_config(config_path):
@@ -23,14 +80,14 @@ def load_config(config_path):
 
 def download_and_convert_model(model_url, model_file):
     if os.path.exists(model_file):
-        print(f"[INFO] Model already exists: {model_file}")
+        log.info("model already exists: %s", model_file)
         return model_file
 
-    print(f"[INFO] Downloading model from {model_url} …")
+    log.info("downloading model from %s", model_url)
     temp_pth = model_url.split("/")[-1]
     urllib.request.urlretrieve(model_url, temp_pth)
 
-    print(f"[INFO] Converting {temp_pth} → {model_file}")
+    log.info("converting %s -> %s", temp_pth, model_file)
     checkpoint = torch.load(temp_pth, map_location="cpu")
     torch.save(checkpoint, model_file)
     os.remove(temp_pth)
@@ -77,7 +134,7 @@ def run_inference_on_sensor(
     for image_file in images:
         full_img = cv2.imread(str(sensor_path / image_file))
         if full_img is None:
-            print(f"[WARN] Could not load image: {image_file}")
+            log.warning("could not load image: %s", image_file)
             continue
 
         # 1) Crop the frame if requested
@@ -210,6 +267,11 @@ def main():
     for _k in ("base_data_path", "queue_file", "model_file"):
         if cfg.get(_k) and not Path(cfg[_k]).is_absolute():
             cfg[_k] = str(_root / cfg[_k])
+    log_file = _root / "data" / "preannotation.log"
+    setup_logging(log_file)
+    console.print(Panel(f"Detailed log: [bold]{log_file}[/bold]",
+                        title="Grounding DINO preannotation", border_style="cyan"))
+
     use_pretrained = cfg.get("use_pretrained_model", False)
     model_type = cfg["model_type"]
     input_w, input_h = cfg["efficientdet_models"][model_type]["input_size"]
@@ -225,7 +287,7 @@ def main():
 
         # let EfficientDetModel default to its own COCO class count (90)
         num_classes = None
-        print(f"[INFO] Using pretrained COCO weights ({model_type}), num_classes=90")
+        log.info("using pretrained COCO weights (%s)", model_type)
     else:
         model_file_cfg = cfg.get("model_file", None)
         if not model_file_cfg:
@@ -239,15 +301,14 @@ def main():
         # class count must match the trained model: all classes in the label map
         # (allowed_labels only filters the export, it does not change the model)
         num_classes = len(load_label_map())
-        print(
-            f"[INFO] Using custom model '{model_path.name}', num_classes={num_classes}"
-        )
+        log.info("using custom model %s num_classes=%s", model_path.name, num_classes)
 
     if model_type == "grounding_dino":
         num_classes = None
-        print("[INFO] Using Grounding DINO (open-vocabulary, HF transformers)")
+        console.print("backend: [cyan]Grounding DINO[/cyan] (open-vocabulary)")
+        log.info("backend: grounding dino")
     else:
-        print(f"[INFO] Using model path: {model_path}")
+        log.info("model path: %s", model_path)
 
     # load label map & pick your classes
     label_map = load_label_map()
@@ -284,7 +345,7 @@ def main():
     if garages == "all":  # auto-discover from the store layout
         base = Path(cfg["base_data_path"])
         garages = sorted(p.name for p in base.iterdir() if p.is_dir())
-        print(f"[INFO] auto-discovered {len(garages)} garages under {base}")
+        log.info("auto-discovered %d garages under %s", len(garages), base)
 
     # optional annotation queue: only process listed frames
     queue = None
@@ -293,20 +354,27 @@ def main():
         import json as _json
         qdata = _json.loads(Path(qf).read_text())
         queue = {p for paths in qdata.values() for p in paths}
-        print(f"[INFO] annotation queue: {len(queue)} frames from {qf}")
+        console.print(f"queue: [green]{len(queue)}[/green] frames")
+        log.info("queue: %d frames from %s", len(queue), qf)
 
+    stats = RunStats()
+    # pre-populate rows so every garage is visible with its sensor total
+    garage_dirs = {}
     for garage in garages:
-        garage_dir = Path(cfg["base_data_path"]) / garage / "training_images"
-        if not garage_dir.exists():  # store layout: sensors directly under garage
-            garage_dir = Path(cfg["base_data_path"]) / garage
-        if not garage_dir.exists():
+        gd = Path(cfg["base_data_path"]) / garage / "training_images"
+        if not gd.exists():
+            gd = Path(cfg["base_data_path"]) / garage
+        if not gd.exists():
             continue
+        garage_dirs[garage] = gd
+        stats.row(garage)["sensors"] = sum(1 for p in gd.iterdir() if p.is_dir())
 
-        sensor_list = sorted(p for p in garage_dir.iterdir() if p.is_dir())
-        with tqdm(
-            total=len(sensor_list), desc=f"Garage: {garage}", unit="sensor"
-        ) as pbar:
+    with Live(stats.table(), console=console, refresh_per_second=2) as live:
+        for garage, garage_dir in garage_dirs.items():
+            sensor_list = sorted(p for p in garage_dir.iterdir() if p.is_dir())
             for sensor_dir in sensor_list:
+                stats.current = f"{garage}/{sensor_dir.name}"
+                live.update(stats.table())
                 output_json = sensor_dir / "preannotations.coco.json"
                 sensor_queue = queue
                 existing_coco = None
@@ -320,12 +388,12 @@ def main():
                         for p in sensor_dir.rglob("*")
                         if p.suffix.lower() in (".png", ".jpg", ".jpeg")
                     }
-                    # file_name entries use the same garage/sensor/rel format
                     new = {f for f in all_frames if f not in done}
                     if queue is not None:
                         new &= queue
                     if not new:
-                        pbar.update(1)
+                        stats.row(garage)["skipped"] += 1
+                        live.update(stats.table())
                         continue
                     sensor_queue = new
                 detections, processed = run_inference_on_sensor(
@@ -343,20 +411,24 @@ def main():
                     queue=sensor_queue,
                 )
 
+                r = stats.row(garage)
                 if not processed:
-                    pbar.update(1)
+                    r["skipped"] += 1
+                    live.update(stats.table())
                     continue
+                r["done"] += 1
+                r["frames"] += len(processed)
+                r["boxes"] += len(detections)
+                log.info("%s/%s: %d frames %d boxes", garage, sensor_dir.name,
+                         len(processed), len(detections))
                 if args.dry_run:
-                    print(
-                        f"[DRY-RUN] Skipping write of {output_json} ({len(detections)} detections)"
-                    )
+                    log.info("dry-run: skipping write of %s", output_json)
                 else:
                     convert_detections_to_coco(
                         label_map, garage, sensor_dir, detections, str(output_json),
                         images_subset=processed,
                     )
                     if existing_coco is not None:
-                        # merge the fresh frames into the pre-existing file
                         import json as _json
                         fresh = _json.loads(Path(output_json).read_text())
                         img_off = max((im["id"] for im in existing_coco["images"]),
@@ -371,8 +443,14 @@ def main():
                         existing_coco["images"] += fresh["images"]
                         existing_coco["annotations"] += fresh["annotations"]
                         Path(output_json).write_text(_json.dumps(existing_coco, indent=2))
+                live.update(stats.table())
 
-                pbar.update(1)
+    tot_frames = sum(r["frames"] for r in stats.rows.values())
+    tot_boxes = sum(r["boxes"] for r in stats.rows.values())
+    console.print(Panel(f"[green]{tot_frames}[/green] frames drafted · "
+                        f"{tot_boxes} boxes\nlog: {log_file}",
+                        title="Done", border_style="green"))
+    log.info("run complete: %d frames %d boxes", tot_frames, tot_boxes)
 
 
 if __name__ == "__main__":
