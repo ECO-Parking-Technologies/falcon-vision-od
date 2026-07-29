@@ -19,8 +19,9 @@ git checkout v2.23.1
 ```
 
 Apply the compose changes from the patch in this directory (share mount into the
-5 cvat services, traefik port 8085, `cvat_share` volume bound to the unified
-store at `/media/lopezemi/Expansion/falcon-vision-od-data`):
+cvat services, traefik port 8085, **traefik image bumped to v3** — v2.10's
+hardcoded Docker API 1.24 is rejected by modern Docker engines and 404s
+everything — and `cvat_share` bound to the unified store):
 
 ```bash
 git apply /home/lopezemi/projects/falcon/falcon-vision-od/cvat/docker-compose.patch
