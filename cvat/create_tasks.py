@@ -32,6 +32,35 @@ except ImportError:
 console = Console()
 
 
+def ensure_labels(client, project):
+    """Create the project's labels from config/cvat_labels.json if missing."""
+    import json
+    have = {l.name for l in project.get_labels()}
+    spec = json.loads(Path("config/cvat_labels.json").read_text())
+    missing = [l for l in spec if l["name"] not in have]
+    if not missing:
+        return
+    for l in missing:
+        l.pop("id", None)  # CVAT assigns its own ids
+    console.print(f"project is missing {len(missing)} labels — creating them…")
+    from cvat_sdk.api_client import models
+    label_models = []
+    for l in missing:
+        attrs = [models.AttributeRequest(
+                     name=a["name"], mutable=a["mutable"],
+                     input_type=models.InputTypeEnum(a["input_type"]),
+                     default_value=a["default_value"], values=a["values"])
+                 for a in l.get("attributes", [])]
+        label_models.append(models.PatchedLabelRequest(
+            name=l["name"], color=l.get("color"),
+            type=l.get("type", "rectangle"), attributes=attrs))
+    client.api_client.projects_api.partial_update(
+        project.id,
+        patched_project_write_request=models.PatchedProjectWriteRequest(
+            labels=label_models))
+    console.print(f"[green]created {len(label_models)} labels[/green]")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--host", default="http://localhost:8085")
@@ -59,7 +88,8 @@ def main():
         if not projects:
             sys.exit(f"project {args.project!r} not found — create it (with labels) first")
         project = projects[0]
-        existing = {t.name for t in client.tasks.list()}
+        ensure_labels(client, project)
+        existing = {t.name: t for t in client.tasks.list()}
 
         t = Table(title=f"CVAT tasks → project '{args.project}'", box=box.SIMPLE_HEAD)
         for col in ("garage", "images", "boxes", "status"):
@@ -72,8 +102,21 @@ def main():
             import json
             n_anns = len(json.loads(ann.read_text())["annotations"]) if ann.exists() else 0
             if b.name in existing:
-                t.add_row(b.name, str(len(imgs)), str(n_anns), "[dim]exists, skipped[/dim]")
-                skipped += 1
+                task = existing[b.name]
+                if n_anns and task.get_annotations().version == 0 and not task.get_annotations().shapes:
+                    try:
+                        console.print(f"importing annotations into existing [cyan]{b.name}[/cyan]…")
+                        task.import_annotations("COCO 1.0", str(ann))
+                        t.add_row(b.name, str(len(imgs)), str(n_anns),
+                                  "[green]annotations imported[/green]")
+                        created += 1
+                    except Exception as e:
+                        t.add_row(b.name, str(len(imgs)), str(n_anns),
+                                  f"[red]import FAILED[/red] {str(e)[:60]}")
+                        failed += 1
+                else:
+                    t.add_row(b.name, str(len(imgs)), str(n_anns), "[dim]exists, skipped[/dim]")
+                    skipped += 1
                 continue
             try:
                 console.print(f"creating [cyan]{b.name}[/cyan] ({len(imgs)} images)…")
