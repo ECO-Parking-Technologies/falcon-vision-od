@@ -153,7 +153,8 @@ def prepare_and_filter_coco_dataset(cfg, split_dir):
 
 
 def merge_and_split_datasets(config):
-    base_path = Path(config["base_data_path"])
+    # absolute: symlink targets must not depend on the split dir's location
+    base_path = Path(config["base_data_path"]).resolve()
     output_dir = Path(config["output_dir"])
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -172,10 +173,24 @@ def merge_and_split_datasets(config):
     next_img_id = 1
     next_ann_id = 1
 
-    for rel_path in config["annotated_files"]:
+    rng = random.Random(config.get("seed", 42))
+    annotated_files = config["annotated_files"]
+    if annotated_files == "auto":
+        # unified store layout: <garage>/<sensor>/preannotations.coco.json
+        annotated_files = sorted(
+            str(p.relative_to(base_path))
+            for p in base_path.glob("*/*/preannotations.coco.json"))
+        print(f"[INFO] auto-discovered {len(annotated_files)} annotation files "
+              f"under {base_path}")
+    split_by = config.get("split_by", "frame")
+    train_frac = config.get("train_val_split", 0.8)
+
+    for rel_path in annotated_files:
         rel_path = Path(rel_path)
         ann_path = base_path / rel_path
-        garage, _, sensor = rel_path.parts[:3]
+        parts = rel_path.parts
+        # legacy: <garage>/training_images/<sensor>/...; store: <garage>/<sensor>/...
+        garage = parts[0]
 
         with open(ann_path) as f:
             coco = json.load(f)
@@ -186,15 +201,23 @@ def merge_and_split_datasets(config):
 
         images = coco["images"]
         annotations = coco["annotations"]
-        random.shuffle(images)
-        split_idx = int(len(images) * config.get("train_val_split", 0.8))
-        train_imgs = images[:split_idx]
-        val_imgs = images[split_idx:]
-
-        img_id_map = {}
+        if split_by == "sensor":
+            # whole sensor goes to one side: no same-camera train/val leakage
+            if rng.random() < train_frac:
+                train_imgs, val_imgs = images, []
+            else:
+                train_imgs, val_imgs = [], images
+        else:
+            rng.shuffle(images)
+            split_idx = int(len(images) * train_frac)
+            train_imgs = images[:split_idx]
+            val_imgs = images[split_idx:]
 
         def process(img_list, target_json, img_dir):
             nonlocal next_img_id, next_ann_id
+            # local map: annotations for THIS side's images only (the old
+            # shared map leaked every file's train annotations into val.json)
+            img_id_map = {}
             for img in img_list:
                 orig_id = img["id"]
                 fname = os.path.basename(img["file_name"])
@@ -263,8 +286,10 @@ def run_training(cfg_path):
     out = merge_and_split_datasets(cfg)
     split_dir = out["train"].parent
 
-    # 1) pull in & merge COCO
-    prepare_and_filter_coco_dataset(cfg, split_dir)
+    # 1) optionally mix in filtered COCO 2017 (skip for pure garage runs —
+    #    e.g. SAM3 distillation, where 60k COCO images would drown the domain)
+    if cfg.get("include_coco", True):
+        prepare_and_filter_coco_dataset(cfg, split_dir)
 
     # 2) build & remap your label map → contiguous IDs
     orig_map = load_label_map()  # {orig_id: name}
@@ -299,7 +324,32 @@ def run_training(cfg_path):
     if cfg.get("extra_args"):
         cli_args += cfg["extra_args"].split()
 
-    # 5) invoke train
+    # 5) run manifest: what went into this run (provenance for later comparison)
+    n_train = len(load_coco_annotations(split_dir / "train.json")["images"])
+    n_val = len(load_coco_annotations(split_dir / "val.json")["images"])
+    git_rev = subprocess.run(["git", "rev-parse", "--short", "HEAD"],
+                             capture_output=True, text=True).stdout.strip()
+    manifest = {
+        "started": datetime.now().isoformat(timespec="seconds"),
+        "config": str(cfg_path),
+        "model": cfg["model"],
+        "num_classes": num_classes,
+        "split_dir": str(split_dir),
+        "split_by": cfg.get("split_by", "frame"),
+        "seed": cfg.get("seed", 42),
+        "train_images": n_train,
+        "val_images": n_val,
+        "include_coco": cfg.get("include_coco", True),
+        "label_source": cfg.get("label_source", "unspecified"),
+        "git_commit": git_rev,
+        "epochs": cfg["epochs"],
+        "batch_size": cfg["batch_size"],
+    }
+    save_coco_annotations(manifest, split_dir / "run.json")
+    print(f"[INFO] run manifest: {split_dir / 'run.json'} "
+          f"({n_train} train / {n_val} val images)")
+
+    # 6) invoke train
     args_ns = train.parser.parse_args(cli_args)
     train.main(args_ns)
 
