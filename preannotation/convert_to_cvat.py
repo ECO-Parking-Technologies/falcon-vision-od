@@ -93,7 +93,7 @@ VEHICLE_CLASSES = {"car", "truck", "bus", "motorcycle", "bicycle"}
 
 # image-level condition tags needing human judgment (roadmap Data Preparation);
 # garage/sensor/time-of-day are NOT tags — they derive from filenames/manifest
-CONDITION_TAGS = ["glare", "rain", "snow", "dirty-lens", "obstruction"]
+CONDITION_TAGS = ["glare", "low-light", "rain", "snow", "dirty-lens", "obstruction"]
 
 
 def _checkbox(name):

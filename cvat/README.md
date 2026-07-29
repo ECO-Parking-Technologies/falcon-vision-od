@@ -48,7 +48,7 @@ preannotation run). It defines:
 - **Rectangle labels**: person, bicycle, car, motorcycle, bus, truck — the
   vehicle classes carry checkbox attributes **InEcoParkingSpot**, **InMotion**,
   **Occluded** (person: Occluded only).
-- **Tag labels** (yes, tags ARE needed — but only these): `glare`, `rain`,
+- **Tag labels** (yes, tags ARE needed — but only these): `glare`, `low-light`, `rain`,
   `snow`, `dirty-lens`, `obstruction`. These are image-level conditions that
   require human judgment.
 - **Deliberately NOT tags**: garage, sensor, time-of-day — all derivable from
@@ -79,7 +79,9 @@ Boxes are pre-drawn. Per image:
   wheel→motorcycle); draw any missed objects. Keep boxes **tight, no padding**.
 - On vehicles: tick **InEcoParkingSpot** if the vehicle occupies a monitored
   spot; **InMotion** for drive-throughs; **Occluded** when partially hidden.
-- Add condition tags (glare/rain/snow/dirty-lens/obstruction) when they apply.
+- Add condition tags (glare/low-light/rain/snow/dirty-lens/obstruction) when they
+  apply — tick `low-light` when the scene is dark enough that vehicles (especially
+  dark ones) are genuinely hard to make out.
 - Useful hotkeys: `F`/`D` next/prev image, `N` new box, `Del` delete,
   `Space` accept.
 
