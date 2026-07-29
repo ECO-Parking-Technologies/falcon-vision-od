@@ -1,16 +1,24 @@
 diff --git a/docker-compose.yml b/docker-compose.yml
-index b00ff6ba3..93c22b7f3 100644
+index b00ff6ba3..daaddb931 100644
 --- a/docker-compose.yml
 +++ b/docker-compose.yml
 @@ -87,6 +87,7 @@ services:
          condition:
            service_started
      environment:
-+      CSRF_TRUSTED_ORIGINS: https://cvat.fvg-emilio-dev.private.ecofalcondata.com,http://cvat.fvg-emilio-dev.private.ecofalcondata.com
++      CSRF_TRUSTED_ORIGINS: https://cvat.fvg-emilio-dev.private.ecofalcondata.com,http://cvat.fvg-emilio-dev.private.ecofalcondata.com,http://192.168.20.66:8085
        <<: [*backend-env, *clickhouse-env]
        DJANGO_MODWSGI_EXTRA_ARGS: ''
        ALLOWED_HOSTS: '*'
-@@ -106,6 +107,8 @@ services:
+@@ -99,13 +100,15 @@ services:
+     labels:
+       - traefik.enable=true
+       - traefik.http.services.cvat.loadbalancer.server.port=8080
+-      - traefik.http.routers.cvat.rule=Host(`${CVAT_HOST:-localhost}`) &&
++      - traefik.http.routers.cvat.rule=Host(`${CVAT_HOST:-localhost}`, `192.168.20.66`) &&
+         PathPrefix(`/api/`, `/static/`, `/admin`, `/documentation/`, `/django-rq`)
+       - traefik.http.routers.cvat.entrypoints=web
+     volumes:
        - cvat_data:/home/django/data
        - cvat_keys:/home/django/keys
        - cvat_logs:/home/django/logs
@@ -83,7 +91,14 @@ index b00ff6ba3..93c22b7f3 100644
      networks:
        - cvat
  
-@@ -255,14 +266,15 @@ services:
+@@ -249,20 +260,21 @@ services:
+     labels:
+       - traefik.enable=true
+       - traefik.http.services.cvat-ui.loadbalancer.server.port=80
+-      - traefik.http.routers.cvat-ui.rule=Host(`${CVAT_HOST:-localhost}`)
++      - traefik.http.routers.cvat-ui.rule=Host(`${CVAT_HOST:-localhost}`, `192.168.20.66`)
+       - traefik.http.routers.cvat-ui.entrypoints=web
+     networks:
        - cvat
  
    traefik:

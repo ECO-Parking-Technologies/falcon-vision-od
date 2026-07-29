@@ -47,9 +47,11 @@ needed.
 
 - **Cloudflare tunnel** (verified setup): the tunnel hostname is CANONICAL.
   Route the public hostname to `http://<lan-ip>:8085` with **HTTP Host Header
-  left empty**, and start CVAT with `CVAT_HOST=<tunnel-hostname>`
-  (`docker compose up -d` in the cvat clone). Everyone — including the admin —
-  uses the tunnel URL; the LAN IP 404s by design.
+  left empty**, and start CVAT with `CVAT_HOST=<tunnel-hostname>` (now pinned
+  in the clone's `.env`; `docker compose up -d` in the cvat clone). Annotators
+  use the tunnel URL; the compose patch also routes the LAN IP directly
+  (traefik matches both hosts + the IP is in CSRF_TRUSTED_ORIGINS), so admin
+  browsing and SDK scripts work on `http://<lan-ip>:8085` without the tunnel.
   Writes (assigning, saving) additionally need `CSRF_TRUSTED_ORIGINS` — stock
   CVAT production settings omit it entirely; the compose patch bind-mounts
   `falcon-vision-od/cvat/production_settings.py` into cvat_server and sets the

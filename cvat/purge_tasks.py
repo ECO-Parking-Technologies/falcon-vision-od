@@ -32,13 +32,17 @@ def main():
     ap.add_argument("--cf-access", action="store_true",
                     help="authenticate through Cloudflare Access with a "
                          "service token (prompted, RAM only)")
+    ap.add_argument("--host-header", default=None,
+                    help="Host header override: reach the LAN IP while "
+                         "traefik routes by the canonical CVAT_HOST name")
     args = ap.parse_args()
 
     user = Prompt.ask("[cyan]CVAT username[/cyan]", console=console)
     password = Prompt.ask("[cyan]CVAT password[/cyan]", password=True,
                           console=console)
 
-    with open_client(args.host, user, password, args.cf_access) as client:
+    with open_client(args.host, user, password, args.cf_access,
+                     args.host_header) as client:
         if args.org:
             client.organization_slug = args.org
         projects = [p for p in client.projects.list() if p.name == args.project]

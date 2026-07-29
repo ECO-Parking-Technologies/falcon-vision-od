@@ -101,12 +101,19 @@ python3 cvat/create_tasks.py --host http://<your-ip>:8085 --project "Falcon Visi
 # add --org <slug> if the project lives inside an organization
 ```
 
-**Through the Cloudflare tunnel** (the local IP 404s once `CVAT_HOST` is the
-tunnel hostname): the SDK cannot click through the Zero Trust login page, so
-use an **Access service token** instead of exposing CVAT publicly — Zero Trust
-→ Access → Service Auth → create token, then add a "Service Auth" policy for
-the CVAT application. Run any SDK script with `--cf-access` and paste the
-token id/secret when prompted (RAM only, never stored):
+**From the LAN (preferred for admin scripts)**: the compose patch routes the
+LAN IP alongside the tunnel hostname (multi-host traefik rule + IP in
+`CSRF_TRUSTED_ORIGINS`), so `--host http://<lan-ip>:8085` just works — no
+tunnel, no Cloudflare. Edit the IP in docker-compose.yml for your network.
+There is also `--host-header <hostname>` to reach an IP while traefik routes
+by a canonical name, if ever needed.
+
+**Through the Cloudflare tunnel** (remote admin): the SDK cannot click through
+the Zero Trust login page, so use an **Access service token** instead of
+exposing CVAT publicly — Zero Trust → Access → Service Auth → create token,
+then add a "Service Auth" policy for the CVAT application. Run any SDK script
+with `--cf-access` and paste the token id/secret when prompted (RAM only,
+never stored):
 
 ```bash
 python3 cvat/create_tasks.py --host https://<tunnel-host> --cf-access --project "Falcon Vision v2"
