@@ -1,16 +1,25 @@
 diff --git a/docker-compose.yml b/docker-compose.yml
-index b00ff6ba3..2322a2bb5 100644
+index b00ff6ba3..93c22b7f3 100644
 --- a/docker-compose.yml
 +++ b/docker-compose.yml
-@@ -106,6 +106,7 @@ services:
+@@ -87,6 +87,7 @@ services:
+         condition:
+           service_started
+     environment:
++      CSRF_TRUSTED_ORIGINS: https://cvat.fvg-emilio-dev.private.ecofalcondata.com,http://cvat.fvg-emilio-dev.private.ecofalcondata.com
+       <<: [*backend-env, *clickhouse-env]
+       DJANGO_MODWSGI_EXTRA_ARGS: ''
+       ALLOWED_HOSTS: '*'
+@@ -106,6 +107,8 @@ services:
        - cvat_data:/home/django/data
        - cvat_keys:/home/django/keys
        - cvat_logs:/home/django/logs
++      - /home/lopezemi/projects/falcon/falcon-vision-od/cvat/production_settings.py:/home/django/cvat/settings/production.py:ro
 +      - cvat_share:/home/django/share:ro
      networks:
        cvat:
          aliases:
-@@ -125,6 +126,7 @@ services:
+@@ -125,6 +128,7 @@ services:
        - cvat_data:/home/django/data
        - cvat_keys:/home/django/keys
        - cvat_logs:/home/django/logs
@@ -18,7 +27,7 @@ index b00ff6ba3..2322a2bb5 100644
      networks:
        - cvat
  
-@@ -141,6 +143,7 @@ services:
+@@ -141,6 +145,7 @@ services:
        - cvat_data:/home/django/data
        - cvat_keys:/home/django/keys
        - cvat_logs:/home/django/logs
@@ -26,7 +35,7 @@ index b00ff6ba3..2322a2bb5 100644
      networks:
        - cvat
  
-@@ -157,6 +160,7 @@ services:
+@@ -157,6 +162,7 @@ services:
        - cvat_data:/home/django/data
        - cvat_keys:/home/django/keys
        - cvat_logs:/home/django/logs
@@ -34,7 +43,7 @@ index b00ff6ba3..2322a2bb5 100644
      networks:
        - cvat
  
-@@ -173,6 +177,7 @@ services:
+@@ -173,6 +179,7 @@ services:
        - cvat_data:/home/django/data
        - cvat_keys:/home/django/keys
        - cvat_logs:/home/django/logs
@@ -42,7 +51,7 @@ index b00ff6ba3..2322a2bb5 100644
      networks:
        - cvat
  
-@@ -189,6 +194,7 @@ services:
+@@ -189,6 +196,7 @@ services:
        - cvat_data:/home/django/data
        - cvat_keys:/home/django/keys
        - cvat_logs:/home/django/logs
@@ -50,7 +59,7 @@ index b00ff6ba3..2322a2bb5 100644
      networks:
        - cvat
  
-@@ -205,6 +211,7 @@ services:
+@@ -205,6 +213,7 @@ services:
        - cvat_data:/home/django/data
        - cvat_keys:/home/django/keys
        - cvat_logs:/home/django/logs
@@ -58,7 +67,7 @@ index b00ff6ba3..2322a2bb5 100644
      networks:
        - cvat
  
-@@ -221,6 +228,7 @@ services:
+@@ -221,6 +230,7 @@ services:
        - cvat_data:/home/django/data
        - cvat_keys:/home/django/keys
        - cvat_logs:/home/django/logs
@@ -66,7 +75,7 @@ index b00ff6ba3..2322a2bb5 100644
      networks:
        - cvat
  
-@@ -237,6 +245,7 @@ services:
+@@ -237,6 +247,7 @@ services:
        - cvat_data:/home/django/data
        - cvat_keys:/home/django/keys
        - cvat_logs:/home/django/logs
@@ -74,7 +83,7 @@ index b00ff6ba3..2322a2bb5 100644
      networks:
        - cvat
  
-@@ -255,14 +264,15 @@ services:
+@@ -255,14 +266,15 @@ services:
        - cvat
  
    traefik:
@@ -92,7 +101,7 @@ index b00ff6ba3..2322a2bb5 100644
        DJANGO_LOG_VIEWER_HOST: grafana
        DJANGO_LOG_VIEWER_PORT: 3000
  
-@@ -407,6 +417,11 @@ volumes:
+@@ -407,6 +419,11 @@ volumes:
    cvat_inmem_db:
    cvat_events_db:
    cvat_cache_db:

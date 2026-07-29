@@ -50,9 +50,11 @@ needed.
   left empty**, and start CVAT with `CVAT_HOST=<tunnel-hostname>`
   (`docker compose up -d` in the cvat clone). Everyone — including the admin —
   uses the tunnel URL; the LAN IP 404s by design.
-  (History: a Host-header rewrite to the LAN IP works for BROWSING but fails
-  all writes with CSRF "origin checking failed" — Django trusts only
-  CVAT_HOST-derived origins. Don't use the rewrite.)
+  Writes (assigning, saving) additionally need `CSRF_TRUSTED_ORIGINS` — stock
+  CVAT production settings omit it entirely; the compose patch bind-mounts
+  `falcon-vision-od/cvat/production_settings.py` into cvat_server and sets the
+  env var with the https+http tunnel origins. (History: a Host-header rewrite
+  browses fine but fails all writes with CSRF "origin checking failed".)
 - **Accounts**: annotators self-register at the URL. **The admin account must be
   a CVAT superuser** to see other users in the Assignee dropdown (personal-
   workspace users only see themselves). Promote once:
