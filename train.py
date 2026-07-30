@@ -772,6 +772,11 @@ def main(args=None):
         with open(os.path.join(output_dir, "args.yaml"), "w") as f:
             f.write(args_text)
 
+    tb_writer = None
+    if output_dir:
+        from torch.utils.tensorboard import SummaryWriter
+        tb_writer = SummaryWriter(log_dir=os.path.join(output_dir, "tb"))
+
     try:
         for epoch in range(start_epoch, num_epochs):
             if args.distributed:
@@ -813,6 +818,15 @@ def main(args=None):
                 # step LR for next epoch
                 lr_scheduler.step(epoch + 1, eval_metrics[eval_metric])
 
+            if tb_writer is not None:
+                for k, v in train_metrics.items():
+                    tb_writer.add_scalar(f"train/{k}", v, epoch)
+                for k, v in eval_metrics.items():
+                    tb_writer.add_scalar(f"val/{k}", v, epoch)
+                tb_writer.add_scalar(
+                    "train/lr", optimizer.param_groups[0]["lr"], epoch)
+                tb_writer.flush()
+
             if saver is not None:
                 utils.update_summary(
                     epoch,
@@ -829,6 +843,8 @@ def main(args=None):
 
     except KeyboardInterrupt:
         pass
+    if tb_writer is not None:
+        tb_writer.close()
     if best_metric is not None:
         logging.info("*** Best metric: {0} (epoch {1})".format(best_metric, best_epoch))
 

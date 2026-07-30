@@ -353,7 +353,26 @@ def run_training(cfg_path):
     args_ns = train.parser.parse_args(cli_args)
     train.main(args_ns)
 
-    # 6) auto-export artifacts from this run's best checkpoint
+    # 7) per-class/size metrics + final run.json into the new run dir
+    runs = sorted(Path(cfg["output_dir"]).glob("train/*/summary.csv"),
+                  key=lambda p: p.stat().st_mtime)
+    if runs:
+        import run_metrics
+        try:
+            run_metrics.compute(runs[-1].parent)
+        except Exception as e:
+            print(f"[metrics] FAILED ({e}) — backfill later with "
+                  f"run_metrics.py {runs[-1].parent}")
+
+    # 8) refresh the static dashboard
+    try:
+        import build_report
+        subprocess.run([sys.executable, str(Path(__file__).parent / "build_report.py"),
+                        "--output-dir", cfg["output_dir"]], check=False)
+    except Exception as e:
+        print(f"[report] skipped ({e})")
+
+    # 9) auto-export artifacts from this run's best checkpoint
     if cfg.get("export_after_training", True):
         export_artifacts(cfg)
 

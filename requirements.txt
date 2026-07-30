@@ -13,12 +13,10 @@ Pillow>=8.0.0
 # COCO support
 pycocotools>=2.0.2
 
-# Config & tracking
+# Config & tracking (TensorBoard curves per run under train/<ts>/tb/;
+# clearml + pytorch-lightning removed 2026-07: never wired to anything)
 omegaconf>=2.0.0
-clearml>=1.10.0
-
-# Training wrapper
-pytorch-lightning>=2.0.0
+tensorboard>=2.15
 
 # Portal image puller UI
 rich>=13.0
