@@ -11,13 +11,17 @@ import cv2
 import numpy as np
 from ai_edge_litert.interpreter import Interpreter
 
-MODEL = sys.argv[3] if len(sys.argv) > 3 else str(Path.home() / "Downloads/efficientdet_lite2.tflite")
+MODEL = sys.argv[3] if len(sys.argv) > 3 else "baseline/efficientdet_lite2.tflite"
 ROOT = Path(sys.argv[1])          # fullset root (annotations/ + val2017/)
 OUT = Path(sys.argv[2])
+# 4th arg "ours": model emits 0-based OUR-class indices (our dropins) instead
+# of 0-based COCO-90 (the off-the-shelf baseline)
+OUR_CLASSES = len(sys.argv) > 4 and sys.argv[4] == "ours"
 
 # baseline emits 0-based COCO-90 class indices -> +1 = original COCO ids;
 # split jsons are remapped: orig {1,2,3,4,6,8} -> {1,2,3,4,5,6}
-ORIG_TO_REMAP = {1: 1, 2: 2, 3: 3, 4: 4, 6: 5, 8: 6}
+ORIG_TO_REMAP = ({i: i for i in range(1, 7)} if OUR_CLASSES
+                 else {1: 1, 2: 2, 3: 3, 4: 4, 6: 5, 8: 6})
 
 interp = Interpreter(model_path=MODEL, num_threads=8)
 interp.allocate_tensors()
