@@ -1,0 +1,28 @@
+# Full-store SAM3 distillation base config (round 0 + learning-curve sweep).
+# The sweep wrapper (run_sweep.py) derives per-point configs from this.
+base_data_path: data/images
+annotated_files: auto          # every <garage>/<sensor>/preannotations.coco.json
+split_by: sensor-hash          # FROZEN split: hash(garage/sensor) decides side,
+                               # stable as the store grows; subsets are nested
+split_salt: falcon-v1          # never change: it would move the val set
+train_val_split: 0.8
+val_max_images: 5000           # frozen val subset (hash-ordered, plenty for AP)
+seed: 42
+# max_train_images: 25000      # set by the sweep wrapper per point
+
+include_coco: false            # arm B flips this (run_sweep.py --arm-b)
+coco_root: /media/lopezemi/Expansion/falcon-vision-ml/artifacts/data_pipeline/coco_dataset  # READ-ONLY source
+coco_max_frac: 0.25            # COCO <= 25% of the mixed train set
+label_source: sam3-drafts-full
+
+output_dir: experiments/falcon-vision-effdet
+model: tf_efficientdet_lite0
+pretrained: True               # fine-tune from the COCO detector checkpoint
+pretrained_backbone: True
+batch_size: 8
+epochs: auto                   # constant step budget -> fair sweep points
+train_steps_budget: 25000
+min_epochs: 2
+amp: true
+extra_args: "--workers 4"
+export_after_training: false   # wrapper enables it on the final (full) point

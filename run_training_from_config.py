@@ -1,3 +1,4 @@
+import hashlib
 import json
 import logging
 import os
@@ -14,6 +15,34 @@ import yaml
 
 import train
 from config.label_loader import *
+
+
+def load_audited_overrides(config):
+    """Human-audited CVAT exports (data/cvat_exports/<garage>.json, COCO 1.0)
+    outrank SAM3 drafts: returns {garage: {image_basename: [(orig_cat_id,
+    bbox), ...]}} for every frame a human has audited."""
+    root = Path(config.get("audited_exports_dir", "data/cvat_exports"))
+    if not root.is_dir():
+        return {}
+    name_to_orig = {v: k for k, v in load_label_map().items()}
+    out = {}
+    for f in sorted(root.glob("*.json")):
+        d = json.loads(f.read_text())
+        cats = {c["id"]: c["name"] for c in d["categories"]}
+        per_img = {}
+        for a in d["annotations"]:
+            per_img.setdefault(a["image_id"], []).append(a)
+        g = out.setdefault(f.stem, {})
+        for im in d["images"]:
+            g[os.path.basename(im["file_name"])] = [
+                (name_to_orig[cats[a["category_id"]]], a["bbox"])
+                for a in per_img.get(im["id"], [])
+                if cats[a["category_id"]] in name_to_orig]
+    if out:
+        n = sum(len(g) for g in out.values())
+        print(f"[INFO] audited overrides: {n} frames across {len(out)} garages "
+              "(human labels replace drafts on these)")
+    return out
 
 
 def load_config(config_path):
@@ -73,17 +102,24 @@ def ensure_coco_dataset(base_data_path: Path):
 
 def prepare_and_filter_coco_dataset(cfg, split_dir):
     """
-    - Ensures COCO is at base_data_path/coco_dataset.
+    - Ensures COCO is available (cfg coco_root points at an existing archive,
+      e.g. the read-only legacy one; otherwise downloaded to base_data_path).
     - Loads label_map, filters COCO JSONs to those IDs.
-    - Symlinks the filtered images into split_dir/train2017/ and val2017/.
-    - Merges them into split_dir/train.json & val.json (and updates annotations/instances_*.json).
+    - Optionally caps the mixed-in fraction (coco_max_frac) so COCO seasons
+      the training instead of dominating it.
+    - By default merges into the TRAIN side only (coco_train_only) — the val
+      set stays pure garage frames so the yardstick never moves.
+    - Symlinks the filtered images and merges the JSONs.
     """
-    base = Path(cfg["base_data_path"])
-    coco_root = ensure_coco_dataset(base)
+    if cfg.get("coco_root"):
+        coco_root = Path(cfg["coco_root"])  # read-only source is fine
+    else:
+        coco_root = ensure_coco_dataset(Path(cfg["base_data_path"]))
     label_map = load_label_map()  # {cat_id: name}
     keep_ids = set(label_map.keys())
 
-    for split in ("train", "val"):
+    splits = ("train",) if cfg.get("coco_train_only", True) else ("train", "val")
+    for split in splits:
         # 1) Load your existing split
         split_json = split_dir / f"{split}.json"
         data = load_coco_annotations(split_json)
@@ -102,6 +138,19 @@ def prepare_and_filter_coco_dataset(cfg, split_dir):
         ]
         valid_img_ids = {a["image_id"] for a in coco_anns}
         coco_imgs = [im for im in coco_data["images"] if im["id"] in valid_img_ids]
+
+        # ratio cap: keep COCO at <= coco_max_frac of the mixed train set
+        frac = cfg.get("coco_max_frac")
+        if split == "train" and frac:
+            n_ours = len(data["images"])
+            cap = int(n_ours * frac / (1 - frac))
+            if len(coco_imgs) > cap:
+                rng = random.Random(cfg.get("seed", 42))
+                coco_imgs = rng.sample(sorted(coco_imgs, key=lambda i: i["id"]), cap)
+                kept = {im["id"] for im in coco_imgs}
+                coco_anns = [a for a in coco_anns if a["image_id"] in kept]
+                print(f"[INFO] coco capped to {cap} imgs "
+                      f"({int(frac*100)}% of mixed train set)")
 
         # 3) Symlink & merge each COCO image/annotation
         img_id_map = {}
@@ -184,13 +233,39 @@ def merge_and_split_datasets(config):
               f"under {base_path}")
     split_by = config.get("split_by", "frame")
     train_frac = config.get("train_val_split", 0.8)
+    max_train = config.get("max_train_images")
+    val_max = config.get("val_max_images")
+    audited = load_audited_overrides(config)
+    n_overridden = 0
 
-    for rel_path in annotated_files:
+    if split_by == "sensor-hash":
+        # frozen split: membership depends only on (salt, garage/sensor), so
+        # the val set never changes as the store grows; ordering by hash gives
+        # a stable shuffle, so max_train_images subsets are NESTED prefixes
+        salt = str(config.get("split_salt", "falcon-v1"))
+        entries = sorted(
+            ((rp, int.from_bytes(
+                hashlib.md5(f"{salt}:{Path(rp).parent}".encode()).digest()[:8],
+                "big")) for rp in annotated_files),
+            key=lambda e: e[1])
+    else:
+        entries = [(rp, None) for rp in annotated_files]
+
+    train_count = val_count = 0
+    for rel_path, sensor_hash in entries:
         rel_path = Path(rel_path)
         ann_path = base_path / rel_path
         parts = rel_path.parts
         # legacy: <garage>/training_images/<sensor>/...; store: <garage>/<sensor>/...
         garage = parts[0]
+        g_over = audited.get(garage, {})
+
+        if split_by == "sensor-hash":
+            is_val = (sensor_hash % 10_000) < round(10_000 * (1 - train_frac))
+            if is_val and val_max and val_count >= val_max:
+                continue
+            if not is_val and max_train and train_count >= max_train:
+                continue
 
         with open(ann_path) as f:
             coco = json.load(f)
@@ -201,7 +276,9 @@ def merge_and_split_datasets(config):
 
         images = coco["images"]
         annotations = coco["annotations"]
-        if split_by == "sensor":
+        if split_by == "sensor-hash":
+            train_imgs, val_imgs = ([], images) if is_val else (images, [])
+        elif split_by == "sensor":
             # whole sensor goes to one side: no same-camera train/val leakage
             if rng.random() < train_frac:
                 train_imgs, val_imgs = images, []
@@ -212,12 +289,15 @@ def merge_and_split_datasets(config):
             split_idx = int(len(images) * train_frac)
             train_imgs = images[:split_idx]
             val_imgs = images[split_idx:]
+        train_count += len(train_imgs)
+        val_count += len(val_imgs)
 
         def process(img_list, target_json, img_dir):
-            nonlocal next_img_id, next_ann_id
+            nonlocal next_img_id, next_ann_id, n_overridden
             # local map: annotations for THIS side's images only (the old
             # shared map leaked every file's train annotations into val.json)
             img_id_map = {}
+            overridden = {}  # orig image id -> audited [(orig_cat, bbox), ...]
             for img in img_list:
                 orig_id = img["id"]
                 fname = os.path.basename(img["file_name"])
@@ -238,9 +318,11 @@ def merge_and_split_datasets(config):
                 )
                 img_id_map[orig_id] = next_img_id
                 next_img_id += 1
+                if fname in g_over:
+                    overridden[orig_id] = g_over[fname]
 
             for ann in annotations:
-                if ann["image_id"] in img_id_map:
+                if ann["image_id"] in img_id_map and ann["image_id"] not in overridden:
                     # compute area from bbox
                     x, y, w, h = ann["bbox"]
                     area = w * h
@@ -257,8 +339,28 @@ def merge_and_split_datasets(config):
                     )
                     next_ann_id += 1
 
+            # human-audited frames: drafts dropped above, audited boxes in
+            for orig_id, audited_anns in overridden.items():
+                n_overridden += 1
+                for cat_id, bbox in audited_anns:
+                    target_json["annotations"].append(
+                        {
+                            "id": next_ann_id,
+                            "image_id": img_id_map[orig_id],
+                            "category_id": cat_id,
+                            "bbox": bbox,
+                            "area": bbox[2] * bbox[3],
+                            "iscrowd": 0,
+                        }
+                    )
+                    next_ann_id += 1
+
         process(train_imgs, train_json, train_img_dir)
         process(val_imgs, val_json, val_img_dir)
+
+    if audited:
+        print(f"[INFO] {n_overridden} frames use human-audited labels "
+              "(drafts overridden)")
 
     # Write out the split JSON manifests
     with open(split_dir / "train.json", "w") as f:
@@ -299,6 +401,19 @@ def run_training(cfg_path):
     # 3) rewrite the JSON files on‐disk so the dataset loader sees [0..num_classes)
     remap_split_jsons(split_dir, id_map, new_label_map)
 
+    n_train = len(load_coco_annotations(split_dir / "train.json")["images"])
+    n_val = len(load_coco_annotations(split_dir / "val.json")["images"])
+
+    # epochs: auto = constant gradient-step budget, so sweep points at
+    # different dataset sizes cost the same wall-clock and compare fairly
+    if cfg.get("epochs") == "auto":
+        budget = int(cfg.get("train_steps_budget", 25000))
+        steps_per_epoch = max(1, n_train // int(cfg["batch_size"]))
+        cfg["epochs"] = max(int(cfg.get("min_epochs", 2)),
+                            round(budget / steps_per_epoch))
+        print(f"[INFO] epochs=auto -> {cfg['epochs']} "
+              f"({budget} step budget / {steps_per_epoch} steps per epoch)")
+
     # 4) now build your CLI args with the correct num_classes
     cli_args = [
         "--dataset",
@@ -325,8 +440,6 @@ def run_training(cfg_path):
         cli_args += cfg["extra_args"].split()
 
     # 5) run manifest: what went into this run (provenance for later comparison)
-    n_train = len(load_coco_annotations(split_dir / "train.json")["images"])
-    n_val = len(load_coco_annotations(split_dir / "val.json")["images"])
     git_rev = subprocess.run(["git", "rev-parse", "--short", "HEAD"],
                              capture_output=True, text=True).stdout.strip()
     manifest = {
@@ -340,6 +453,7 @@ def run_training(cfg_path):
         "train_images": n_train,
         "val_images": n_val,
         "include_coco": cfg.get("include_coco", True),
+        "max_train_images": cfg.get("max_train_images"),
         "label_source": cfg.get("label_source", "unspecified"),
         "git_commit": git_rev,
         "epochs": cfg["epochs"],
