@@ -256,7 +256,8 @@ def repack_for_old_runtimes(src: Path, dst: Path = None):
 
 def apply_surgery(src: Path, dst: Path, anchors: np.ndarray, num_classes: int,
                   score_threshold: float):
-    """uint8 input + DEQUANTIZE, then append TFLite_Detection_PostProcess."""
+    """uint8 input + DEQUANTIZE (float body) or QUANTIZE requant (int8 body),
+    then append TFLite_Detection_PostProcess (dequantizing int8 heads first)."""
     raw = src.read_bytes()
     model = schema.ModelT.InitFromPackedBuf(bytearray(raw), 0)
     sg = model.subgraphs[0]
@@ -264,24 +265,41 @@ def apply_surgery(src: Path, dst: Path, anchors: np.ndarray, num_classes: int,
     _inline_external_buffers(model, raw)
     _downcast_int64_paddings(model)
 
-    # --- (a) uint8 input feeding a DEQUANTIZE into the old float input ---
+    # --- (a) uint8 interface input feeding the graph's real input ---
     if len(sg.inputs) != 1:
         sys.exit(f"expected a single graph input, got {list(sg.inputs)}")
-    float_in = int(sg.inputs[0])
-    in_shape = list(sg.tensors[float_in].shape)
+    graph_in = int(sg.inputs[0])
+    in_t = sg.tensors[graph_in]
+    in_shape = list(in_t.shape)
     quant = schema.QuantizationParametersT()
-    quant.scale = [1.0]      # raw byte value == float value the graph expects
-    quant.zeroPoint = [0]
+    if in_t.type == schema.TensorType.FLOAT32:
+        # raw byte value == float value the graph expects
+        quant.scale = [1.0]
+        quant.zeroPoint = [0]
+        bridge_code = _add_opcode(model, builtin=schema.BuiltinOperator.DEQUANTIZE,
+                                  version=1)  # v1 = uint8 dequant, oldest-runtime safe
+    elif in_t.type == schema.TensorType.INT8:
+        # same scale, zero-point shifted +128: uint8 byte b == int8 (b-128),
+        # so QUANTIZE is an exact requantization (pure offset)
+        s = float(in_t.quantization.scale[0])
+        z = int(in_t.quantization.zeroPoint[0])
+        if not (0 <= z + 128 <= 255):
+            sys.exit(f"int8 input zero-point {z} cannot shift into uint8")
+        quant.scale = [s]
+        quant.zeroPoint = [z + 128]
+        bridge_code = _add_opcode(model, builtin=schema.BuiltinOperator.QUANTIZE,
+                                  version=2)  # v2 = requantize support
+    else:
+        sys.exit(f"unsupported graph input type {in_t.type}")
     u8_idx = _add_tensor(sg, "serving_default_images:0", in_shape,
                          schema.TensorType.UINT8, buffer=0, quant=quant)
-    deq_code = _add_opcode(model, builtin=schema.BuiltinOperator.DEQUANTIZE,
-                           version=1)  # v1 = uint8 dequant, oldest-runtime safe
-    deq = schema.OperatorT()
-    deq.opcodeIndex = deq_code
-    deq.inputs = [u8_idx]
-    deq.outputs = [float_in]
-    sg.operators.insert(0, deq)  # operators must stay in execution order
+    bridge = schema.OperatorT()
+    bridge.opcodeIndex = bridge_code
+    bridge.inputs = [u8_idx]
+    bridge.outputs = [graph_in]
+    sg.operators.insert(0, bridge)  # operators must stay in execution order
     sg.inputs = [u8_idx]
+    float_in = graph_in  # signature fix-up below
 
     # --- (b) TFLite_Detection_PostProcess over (boxes, scores, anchors) ---
     outs = list(sg.outputs)
@@ -289,6 +307,28 @@ def apply_surgery(src: Path, dst: Path, anchors: np.ndarray, num_classes: int,
         sys.exit(f"expected 2 graph outputs (boxes, scores), got {outs}")
     box_idx = next(i for i in outs if list(sg.tensors[i].shape)[-1] == 4)
     score_idx = next(i for i in outs if i != box_idx)
+
+    # int8 heads must be dequantized: the postprocess op reads float tensors
+    deq8_code = None
+    def _ensure_float(idx):
+        nonlocal deq8_code
+        t = sg.tensors[idx]
+        if t.type != schema.TensorType.INT8:
+            return idx
+        if deq8_code is None:
+            deq8_code = _add_opcode(model, builtin=schema.BuiltinOperator.DEQUANTIZE,
+                                    version=2)  # v2 = int8 dequant
+        f_idx = _add_tensor(sg, t.name.decode() + "_f32", list(t.shape),
+                            schema.TensorType.FLOAT32)
+        d = schema.OperatorT()
+        d.opcodeIndex = deq8_code
+        d.inputs = [idx]
+        d.outputs = [f_idx]
+        sg.operators.append(d)
+        return f_idx
+
+    box_idx = _ensure_float(box_idx)
+    score_idx = _ensure_float(score_idx)
     n_anchors = list(sg.tensors[box_idx].shape)[1]
     if anchors.shape != (n_anchors, 4):
         sys.exit(f"anchor mismatch: anchors {anchors.shape} vs boxes [1,{n_anchors},4]")
@@ -482,6 +522,13 @@ def main():
     ap.add_argument("--input-size", type=int, default=448,
                     help="square input size baked into the packaged model "
                          "(firmware resizes frames to match; 320 = lite0 native)")
+    ap.add_argument("--quant", choices=["dynamic", "int8"], default="dynamic",
+                    help="dynamic = int8 weights/f32 activations (safe on any "
+                         "runtime); int8 = full static PTQ (fastest on CPU; "
+                         "Greg confirmed the 2.6 FW build runs int8)")
+    ap.add_argument("--calib-dir", type=Path, default=Path("data/images"),
+                    help="calibration image root for --quant int8")
+    ap.add_argument("--calib-count", type=int, default=64)
     ap.add_argument("--validate-only", action="store_true",
                     help="skip building; validate the existing packaged file")
     args = ap.parse_args()
@@ -495,7 +542,8 @@ def main():
     ckpt = args.checkpoint or find_ckpt(out_dir)
     art_dir = artifact_dir(out_dir, model_name, ckpt)
     size_tag = "" if args.input_size == 448 else str(args.input_size)
-    dropin_path = art_dir / f"{art_dir.name}.dropin{size_tag}.tflite"
+    quant_tag = ".int8" if args.quant == "int8" else ""
+    dropin_path = art_dir / f"{art_dir.name}.dropin{size_tag}{quant_tag}.tflite"
     dropin_f32_path = art_dir / f"{art_dir.name}.dropin{size_tag}.f32.tflite"
 
     if not args.validate_only:
@@ -518,15 +566,34 @@ def main():
 
         with tempfile.TemporaryDirectory() as td:
             f32_raw = Path(td) / "f32.tflite"
-            dyn_raw = Path(td) / "dyn.tflite"
+            q_raw = Path(td) / "quant.tflite"
             edge_model = litert_torch.convert(wrapper, sample)
             edge_model.export(str(f32_raw))
-            qt = aeq_quantizer.Quantizer(f32_raw, aeq_recipe.dynamic_wi8_afp32())
-            qt.quantize(serialize_to_path=dyn_raw)
+            if args.quant == "int8":
+                from export_tflite import calibration_images
+                it = Interpreter(model_path=str(f32_raw))
+                it.allocate_tensors()
+                sig_key = list(it.get_signature_list().keys())[0]
+                input_name = it.get_signature_list()[sig_key]["inputs"][0]
+                calib = []
+                for f in calibration_images(args.calib_dir, args.calib_count):
+                    img = cv2.imread(str(f))
+                    if img is None:
+                        continue
+                    rgb = cv2.cvtColor(cv2.resize(img, (IMAGE_SIZE, IMAGE_SIZE)),
+                                       cv2.COLOR_BGR2RGB)
+                    # wrapper takes RAW 0-255 float NHWC (norm is in-graph)
+                    calib.append({input_name: rgb[None].astype(np.float32)})
+                print(f"Calibrating int8 on {len(calib)} garage images…")
+                qt = aeq_quantizer.Quantizer(f32_raw, aeq_recipe.static_wi8_ai8())
+                qt.quantize(qt.calibrate({sig_key: calib}), serialize_to_path=q_raw)
+            else:
+                qt = aeq_quantizer.Quantizer(f32_raw, aeq_recipe.dynamic_wi8_afp32())
+                qt.quantize(serialize_to_path=q_raw)
 
             score_thr = float("-inf")  # same as the baseline's op options
             apply_surgery(f32_raw, dropin_f32_path, anchors, num_classes, score_thr)
-            apply_surgery(dyn_raw, dropin_path, anchors, num_classes, score_thr)
+            apply_surgery(q_raw, dropin_path, anchors, num_classes, score_thr)
         print(f"Wrote {dropin_f32_path} ({dropin_f32_path.stat().st_size / 1e6:.1f} MB)")
         print(f"Wrote {dropin_path} ({dropin_path.stat().st_size / 1e6:.1f} MB)")
 
@@ -543,7 +610,7 @@ def main():
     if not (ok and ok_f32):
         sys.exit("\nVALIDATION FAILED (files left in place for debugging)")
 
-    update_manifest(art_dir, "tflite_dropin", {
+    update_manifest(art_dir, f"tflite_dropin{quant_tag.replace('.', '_')}", {
         "model": model_name,
         "checkpoint": str(ckpt),
         "file": dropin_path.name,
@@ -551,7 +618,9 @@ def main():
         "size_bytes": dropin_path.stat().st_size,
         "size_bytes_f32": dropin_f32_path.stat().st_size,
         "num_classes": num_classes,
-        "quantization": "ai-edge-quantizer dynamic_wi8_afp32 (int8 weights, f32 activations)",
+        "quantization": ("ai-edge-quantizer static_wi8_ai8 (full-int8 static PTQ, "
+                         "garage-calibrated)" if args.quant == "int8" else
+                         "ai-edge-quantizer dynamic_wi8_afp32 (int8 weights, f32 activations)"),
         "contract": {
             "input": f"[1,{IMAGE_SIZE},{IMAGE_SIZE},3] uint8 RGB raw bytes "
                      "(quant scale=1.0 zp=0; in-graph dequant + ImageNet norm)",

@@ -75,7 +75,11 @@ def preprocess(img_bgr, size):
 
 def calibration_images(calib_root, count, seed=0):
     root = Path(calib_root)
+    # legacy layout first, then the unified store (<garage>/<sensor>/<Y>/<M>/)
     files = sorted(root.glob("*/training_images/*/*.png"))
+    if not files:
+        files = sorted(p for p in root.glob("*/*/*/*/*")
+                       if p.suffix.lower() in (".jpg", ".jpeg", ".png"))
     if not files:
         sys.exit(f"No calibration images found under {root}")
     random.Random(seed).shuffle(files)
