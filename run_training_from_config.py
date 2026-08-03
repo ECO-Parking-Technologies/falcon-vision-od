@@ -512,8 +512,13 @@ def export_artifacts(cfg):
     if export_py.exists():
         jobs.append([str(export_py), str(repo / "export_tflite.py"), "--checkpoint", ckpt])
         if (repo / "package_dropin.py").exists():
-            # no flag: the packager builds and then validates by default
-            # (do NOT pass --validate: argparse prefix-matches it to --validate-only)
+            # no --validate flag: the packager builds then validates by default
+            # (argparse would prefix-match --validate to --validate-only).
+            # BOTH sizes: native 320 is the deliverable (FW reads input dims;
+            # the 448 fallback once shipped by mistake = exactly 2x latency
+            # on-device), 448 kept as the safety variant.
+            jobs.append([str(export_py), str(repo / "package_dropin.py"),
+                         "--checkpoint", ckpt, "--input-size", "320"])
             jobs.append([str(export_py), str(repo / "package_dropin.py"),
                          "--checkpoint", ckpt])
     else:
