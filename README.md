@@ -18,16 +18,19 @@ Different model scales (input resolution / variant) can be targeted per tier fro
 
 See [docs/road-map/](docs/road-map/) for the full research roadmap (model selection, compute budget, data preparation, training, evaluation, deployment), [docs/planning/](docs/planning/) for the current working plan of remaining tasks, and [docs/portal-api/](docs/portal-api/) for the ECO Parking portal GraphQL API reference.
 
-## Pipeline Overview
+## Pipeline Overview (SAM 3 distillation)
 
 ```
-Portal snapshot pull (all garages) → Preannotation → CVAT (human confirm)
-      → COCO export → Training → Checkpoint
-      → Auto-export (TFLite variants + drop-in package) → Sensor firmware (file swap)
+Portal snapshot pull (all garages) → SAM 3 preannotation (drafts EVERY frame)
+      ├→ CVAT audit subset (humans grade + correct — gold eval, not volume labeling)
+      └→ Training on drafts (audited exports override them) → Checkpoint
+            → Auto: per-class metrics + dashboard + TFLite variants
+              + native-res drop-in packages (dynamic / f32 / int8) → sensor file swap
 ```
 
 - **Classes** ([config/label_map.yaml](config/label_map.yaml)): person, bicycle, car, motorcycle, bus, truck (COCO ids, remapped to contiguous ids for training).
-- **Data root**: `/media/lopezemi/Expansion/falcon-vision-ml/artifacts/data_pipeline`, laid out as `<garage>/training_images/<sensor>/<sensor>-<camera>-<date>-<time>-<nn>.png`.
+- **Data root**: `data/images` (symlink to the unified store) — `<garage>/<sensor>/<YYYY>/<MM>/*.jpg` + per-sensor `preannotations.coco.json` drafts.
+- **Docs**: [docs/training-and-experiments.md](docs/training-and-experiments.md) (experiment machinery, results, packaging + latency), [preannotation/README.md](preannotation/README.md) (SAM 3 setup incl. gated-weights access), [cvat/README.md](cvat/README.md) (annotation infra).
 
 ---
 

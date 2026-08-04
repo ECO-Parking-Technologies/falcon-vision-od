@@ -66,5 +66,9 @@ needed.
   stats. Spot-check early work from each new annotator against the guidelines
   (especially box tightness and the eco-spot flag) before they do volume.
 - **When a garage's task is completed**: export it (task → Menu → Export
-  annotations → COCO 1.0) into `data/cvat_exports/`. ~8–10 garages is enough
-  to run the first training round.
+  annotations → COCO 1.0) into `data/cvat_exports/` — exports there
+  automatically OVERRIDE the SAM3 drafts in every training build. Role of
+  audits (revised 2026-07-31): training now runs on SAM3 drafts at full
+  scale; the ~3–5k audited frames serve as the honest eval yardstick and as
+  blind-spot checks on condition slices (night/snow/glare) — quality over
+  volume.
