@@ -44,11 +44,27 @@ def main():
                     help='comma list of train-image caps, "full" = no cap')
     ap.add_argument("--arm-b", action="store_true",
                     help="add one full-size run with capped COCO mixed in")
+    ap.add_argument("--models", default=None,
+                    help="capacity ladder instead of a size sweep: comma list "
+                         "of effdet model names, each trained once on the full "
+                         "store (e.g. tf_efficientdet_lite1,tf_efficientdet_d2)")
     args = ap.parse_args()
 
     base_cfg = yaml.safe_load(Path(args.config).read_text())
     scratch = Path(base_cfg["output_dir"]) / "sweep_configs"
     scratch.mkdir(parents=True, exist_ok=True)
+
+    if args.models:
+        # capacity ladder: one full-store point per architecture, all exported
+        BS = {"tf_efficientdet_lite4": 6, "tf_efficientdet_d1": 6,
+              "tf_efficientdet_d2": 4}  # keep the 3090 out of OOM at 640/768
+        for name in [m.strip() for m in args.models.split(",") if m.strip()]:
+            one_point(base_cfg, scratch, name.replace("tf_efficientdet_", ""),
+                      {"model": name, "export_after_training": True,
+                       "batch_size": BS.get(name, base_cfg["batch_size"])})
+        print("\n[sweep] ladder done — open the dashboard: "
+              f"{base_cfg['output_dir']}/report.html")
+        return
 
     sizes = [s.strip() for s in args.sizes.split(",") if s.strip()]
     for i, s in enumerate(sizes):
