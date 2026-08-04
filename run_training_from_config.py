@@ -506,21 +506,36 @@ def export_artifacts(cfg):
     repo = Path(__file__).parent
     export_py = repo / "falcon-vision-od-export-venv" / "bin" / "python"
     env = {"PYTHONPATH": str(repo), "PATH": "/usr/bin:/bin", "CUDA_VISIBLE_DEVICES": ""}
+    # every tool gets --model explicitly: the ladder trains many architectures,
+    # and the packager's config-file default is lite0 (weights would not load)
+    model = cfg["model"]
+    # native input size per architecture: the dropin is built at native res
+    # (FW reads dims from the file; a 448 build on a 320 model = 2x latency)
+    NATIVE = {"tf_efficientdet_lite0": 320, "tf_efficientdet_lite1": 384,
+              "tf_efficientdet_lite2": 448, "tf_efficientdet_lite3": 512,
+              "tf_efficientdet_lite3x": 640, "tf_efficientdet_lite4": 640,
+              "tf_efficientdet_d0": 512, "tf_efficientdet_d1": 640,
+              "tf_efficientdet_d2": 768}
+    native = str(NATIVE.get(model, 448))
     jobs = [
-        [sys.executable, str(repo / "generate_model_files.py"), "--checkpoint", ckpt],
+        [sys.executable, str(repo / "generate_model_files.py"),
+         "--checkpoint", ckpt, "--model", model],
     ]
     if export_py.exists():
-        jobs.append([str(export_py), str(repo / "export_tflite.py"), "--checkpoint", ckpt])
+        jobs.append([str(export_py), str(repo / "export_tflite.py"),
+                     "--checkpoint", ckpt, "--model", model])
         if (repo / "package_dropin.py").exists():
             # no --validate flag: the packager builds then validates by default
             # (argparse would prefix-match --validate to --validate-only).
-            # BOTH sizes: native 320 is the deliverable (FW reads input dims;
-            # the 448 fallback once shipped by mistake = exactly 2x latency
-            # on-device), 448 kept as the safety variant.
+            # native-size dropins in BOTH quantizations: dynamic+f32 pair, then
+            # full-int8 (garage-calibrated) — the complete bench test matrix
             jobs.append([str(export_py), str(repo / "package_dropin.py"),
-                         "--checkpoint", ckpt, "--input-size", "320"])
+                         "--checkpoint", ckpt, "--model", model,
+                         "--input-size", native])
             jobs.append([str(export_py), str(repo / "package_dropin.py"),
-                         "--checkpoint", ckpt])
+                         "--checkpoint", ckpt, "--model", model,
+                         "--input-size", native, "--quant", "int8",
+                         "--calib-count", "256"])
     else:
         print("[export] export venv missing (run setup_export_venv.sh) — TFLite export skipped")
     for job in jobs:
