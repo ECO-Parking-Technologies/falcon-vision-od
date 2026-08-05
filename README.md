@@ -10,7 +10,7 @@ The sensor firmware already runs an off-the-shelf **EfficientDet-Lite2** (448×4
 
 | Tier | Hardware | Inference path |
 |------|----------|----------------|
-| Low  | Raspberry Pi CM3+ (quad Cortex-A53) | TFLite int8 on CPU (XNNPACK) |
+| Low  | Raspberry Pi CM3+ (quad Cortex-A53) | TFLite int8 on CPU (2.6 runtime, no XNNPACK in current FW) |
 | Mid  | [DART-MX8M-PLUS](https://variscite.com/system-on-module-som/i-mx-8/i-mx-8m-plus/dart-mx8m-plus/) (i.MX8M Plus) | TFLite int8 on 2.3 TOPS NPU (VX delegate / eIQ) |
 | High | [DART-MX95](https://variscite.com/system-on-module-som/i-mx-9/i-mx-95/dart-mx95/) (i.MX95) | TFLite int8 on eIQ Neutron NPU |
 

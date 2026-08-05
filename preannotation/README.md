@@ -45,6 +45,14 @@ details stream to `data/preannotation.log` automatically. Ctrl-C any time —
 `--skip-existing` resumes at frame granularity and also picks up frames added
 by later portal pulls, merging new drafts into existing per-sensor JSONs.
 
+Visual QA of drafts (local browsing only — customer CCTV):
+
+```bash
+python3 preannotation/render_drafts.py                      # 3 frames/garage
+python3 preannotation/render_drafts.py --garage <slug> --count 24
+# -> data/draft_previews/index.html
+```
+
 ## After drafting: into CVAT
 
 ```bash

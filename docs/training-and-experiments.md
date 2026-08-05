@@ -40,7 +40,24 @@ unified store (data/images, 117k frames, 39 garages)
   drag the mean to meaninglessness). Val labels are SAM3's: sweep numbers are
   distillation fidelity; honest accuracy comes from audited gold.
 
-## Results so far (frozen 5k val, SAM3 labels)
+## Capacity ladder & deployment targets (2026-08-05)
+
+Six architectures, identical data (94,628 train / frozen 5k val), identical
+step budget — visualization: `experiments/falcon-vision-effdet/ladder.html`.
+Car AP as %: lite0 47.6 · lite1 53.9 · **lite2 59.3** · lite3 60.0 ·
+lite4 60.8 · **d1 62.7** (d2 pending). Person %: 2.1/3.2/5.4/5.3/7.3/6.1 vs
+the prod-baseline gate of 3.8. Findings: knee at lite2; d1 beats lite4 with
+half the params (d-series architecture > scaled lite; provisional FVS2/NPU
+pick); person AP is capacity/resolution-bound, clears the gate from lite2 up.
+
+**Deployment targets**: PRIMARY = lite1 `dropin-384-int8` (3.1 s CM3 bench,
+2× production's car accuracy); speed fallback = lite0 `dropin-320-int8`
+(1.6 s). lite2 (59.3%) runs 5.4 s — over the ≤4 s budget — pending one
+experiment (plain-sum BiFPN retrain) before conceding it to FVS2.
+Known issue: lite4/d1 clean-int8 packaging currently fails (d-series SiLU vs
+TF2.8 converter suspected; checkpoints verified fine via .ts.pt).
+
+## Earlier results (frozen 5k val, SAM3 labels)
 
 - **Data curve (lite0)**: car AP flat ~0.463 from 6k→50k train images —
   **lite0 saturates at ~6k**; full-store 0.4756 (small cooldown-step caveat).
@@ -76,25 +93,35 @@ model's **native input size**. Firmware reads input dims from the file
 (never ship a 448 build of a 320 model: exactly 2× latency — that mistake is
 why sizes live in the filename now).
 
-| lite0@320 variant | on-device | car AP (dropin, frozen val) |
-|---|---|---|
-| dynamic | ~3.0 s | — |
-| f32 | ~2.6 s | 0.438 |
-| int8 | **~1.7 s** | 0.421 |
+| build (clean export) | on-device |
+|---|---|
+| off-shelf lite2@448 int8 (prod) | ~3.0 s |
+| lite0-320: dyn / f32 / **int8** | 3.0 / 2.6 / **1.6 s** |
+| lite1-384 int8 | **3.1 s** |
+| lite2-448 int8 (legacy / AEQ / TFQ) | 6.6 / 5.4 / 5.6 s |
 
-- The 2.6 FW runtime DOES run new-style int8 (verified on bench 2026-08-03).
-- 2.6-era XNNPACK accelerates **float only**; our current export graph would
-  fragment it into 75 delegate partitions (109 TRANSPOSEs from the converter)
-  → **export cleanup (NHWC-native path) is the next latency lever**, then one
-  bench session: cleaned-int8 vs cleaned-f32+XNNPACK decides the CM3 variant.
+- The 2.6 FW runtime DOES run new-style int8 (bench-verified 2026-08-03).
+- **dynamic-range is SLOWER than f32** on 2.6 (hybrid-conv reference-kernel
+  penalty) — dyn is a compatibility variant, never the speed pick.
+- 2.6-era XNNPACK accelerates **float only** (why int8 tests never showed
+  gains). With the clean graph, f32+XNNPACK (FW rebuild) is an untested lever.
+- Clean export bought 6–19% on-device and matched Google's export op-for-op
+  on the conv chain; the residual lite2 gap vs the off-the-shelf is
+  **architectural** (weighted-BiFPN SUM chains + unfused RELU6 = elementwise
+  feature-map passes the A53 pays for and desktop hides) — remaining lever:
+  retrain with `weight_method='sum'`.
+- Desktop timing lost latency-prediction authority for boundary-op effects
+  (ties on desktop, 1.8× apart on device) — only the sensor bench decides.
 - Decision policy: accuracy first while OD latency ≤ ~4 s (OD is the fusion
   confirm voice at 40% duty; prod ran 3 s for years).
 
 ## Queued next
 
-1. Capacity ladder (lite1→d2) — running; watch person AP vs tier
-2. Export cleanup (kill the transposes) → Greg's XNNPACK rebuild test
-3. Round 1: winner + Tier-1 photometric augmentation (night/glare/WB)
-4. Spot-occupancy evaluator vs portal validations (the business metric)
-5. FVS2 planning: native-res training-image capture + modern runtime in the
-   firmware spec from demo unit #1 (see project memory / roadmap)
+1. lite4/d1/d2 clean-int8 packaging failure — diagnose (SiLU vs TF2.8?)
+2. d2 eval → complete the ladder (+ ladder.html)
+3. Plain-sum lite2 retrain (the ≤4 s challenger)
+4. Round 1: photometric augmentation (night/glare/WB) + person-AP fix;
+   gold re-score of all checkpoints as audited exports accumulate
+5. Spot-occupancy evaluator vs portal validations (the business metric)
+6. Greg-side: XNNPACK FW rebuild test with the clean f32 dropin
+7. FVS2 spec: native-res training-image capture + modern runtime (long-lead)

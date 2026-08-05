@@ -38,14 +38,17 @@ are genuinely hard to make out) · `rain` · `snow` · `dirty-lens` · `obstruct
 (something blocking the lens view). Garage/sensor/time-of-day are derived
 automatically — never tag them.
 
-## Auditing the pre-annotations (Grounding DINO drew first drafts)
+## Auditing the pre-annotations (SAM 3 drew the drafts — since 2026-07-29)
 
-Expect and fix these known patterns:
-- **Missed vehicles** — especially distant/dark ones (the drafts used a 0.25
-  confidence cutoff). Drawing missed boxes is the main manual work.
-- **car ↔ truck mixups** (SUVs/pickups) — fix the class from the sidebar.
-- **Duplicate overlapping boxes** on the same object — delete the worse one.
-- **Wheel → motorcycle**, **cart → truck** false positives — delete.
+SAM 3 drafts are much stronger than the earlier Grounding DINO ones (distant
+cars are usually boxed, wheel→motorcycle false positives are gone), so the
+job leans toward *verify and tick attributes*. Still check for:
+- **Duplicate overlapping boxes** in fog/glare frames — delete the worse one
+  (most are auto-removed, a few survive).
+- **car ↔ truck on pickups** — SAM 3 usually matches our policy (SUV =
+  `car`), but verify genuine pickups/box-trucks are `truck`.
+- **Missed vehicles in very dark frames** — rarer now, but night scenes are
+  where the drafts are weakest; scan those carefully.
 - Class definitions: pickup/box-truck/van = `truck`; SUV/sedan/crossover =
   `car`; shuttle = `bus`.
 
