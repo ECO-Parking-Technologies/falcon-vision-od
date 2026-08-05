@@ -57,8 +57,9 @@ print("tfq int8 ->", out)
 def _run(cmd, **kw):
     r = subprocess.run(cmd, capture_output=True, text=True, **kw)
     if r.returncode != 0:
-        sys.exit(f"[clean_convert] FAILED: {' '.join(str(c) for c in cmd[:3])}…\n"
-                 f"{r.stdout[-1500:]}\n{r.stderr[-1500:]}")
+        raise RuntimeError(
+            f"[clean_convert] FAILED: {' '.join(str(c) for c in cmd[:3])}…\n"
+            f"{r.stdout[-1500:]}\n{r.stderr[-1500:]}")
     return r
 
 
@@ -97,6 +98,36 @@ def quantize_int8(saved_model_dir, size, calib_root, calib_count, out_path):
     _run([str(TFQ_VENV / "bin" / "python"), script, str(saved_model_dir),
           str(size), str(calib_root), str(calib_count), str(out_path)])
     Path(script).unlink()
+
+
+def quantize_int8_aeq(f32_path, size, calib_root, calib_count, out_path):
+    """Fallback static PTQ via ai-edge-quantizer, used when the TF-2.8
+    converter chokes (d-series: 'illegal scale: INF'). ~1.3 car AP below the
+    TFQ path on lite2 — acceptable for tiers whose int8 target is NPU-era."""
+    import glob as _glob
+    import random as _random
+    import cv2
+    import numpy as np
+    from ai_edge_litert.interpreter import Interpreter
+    from ai_edge_quantizer import quantizer as aeq_quantizer
+    from ai_edge_quantizer import recipe as aeq_recipe
+    it = Interpreter(model_path=str(f32_path))
+    it.allocate_tensors()
+    sig = list(it.get_signature_list().keys())[0]
+    iname = it.get_signature_list()[sig]["inputs"][0]
+    files = sorted(_glob.glob(str(calib_root) + "/*/*/*/*/*.jpg"))
+    _random.Random(0).shuffle(files)
+    calib = []
+    for f in files:
+        img = cv2.imread(f)
+        if img is None:
+            continue
+        rgb = cv2.cvtColor(cv2.resize(img, (size, size)), cv2.COLOR_BGR2RGB)
+        calib.append({iname: rgb[None].transpose(0, 3, 1, 2).astype(np.float32)})
+        if len(calib) >= calib_count:
+            break
+    qt = aeq_quantizer.Quantizer(str(f32_path), aeq_recipe.static_wi8_ai8())
+    qt.quantize(qt.calibrate({sig: calib}), serialize_to_path=str(out_path))
 
 
 def quantize_dynamic(f32_path, out_path):
