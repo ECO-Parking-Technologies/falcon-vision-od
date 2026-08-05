@@ -54,14 +54,27 @@ unified store (data/images, 117k frames, 39 garages)
   condition-slice blind-spot checks; no volume box-drawing. Audited CVAT
   exports automatically override drafts in every training build.
 
-## Packaging & on-device latency (CM3, bench-measured)
+## Packaging, artifact naming & on-device latency (CM3, bench-measured)
 
-Every training run auto-exports at the model's **native input size**:
-`.dropin<size>.tflite` (dynamic-range), `.dropin<size>.f32.tflite`, and
-`.dropin<size>.int8.tflite` (static PTQ, 256 garage-frame calibration) — all
-byte-compatible with the sensor contract and validated vs the baseline.
-Firmware reads input dims from the file (never ship a 448 build of a 320
-model: exactly 2× latency — that mistake is why auto-export is size-aware).
+**Export path (default since 2026-08-05): the CLEAN converter** —
+torch → ONNX → onnx2tf → quantize ([clean_convert.py](../clean_convert.py);
+venvs via `setup_convert_venvs.sh`; `--legacy-export` = old litert-torch
+path, ~15-20% slower on-device from transpose/boundary-op pollution).
+
+**Artifact naming — size and quantization are ALWAYS explicit:**
+
+| file | what it is |
+|---|---|
+| `<run>.dropin-<size>-f32.tflite` | sensor-ready, float32 (most accurate) |
+| `<run>.dropin-<size>-dyn.tflite` | sensor-ready, dynamic-range (int8 weights/f32 act) |
+| `<run>.dropin-<size>-int8.tflite` | sensor-ready, full-int8 (fastest on CM3 CPU) |
+| `<run>.raw-{f32,dyn,int8}.tflite` | raw network (pre-NMS heads) — dev/eval only, NOT for sensors |
+| `<run>.ts.pt` | TorchScript (desktop inference) |
+
+One `package_dropin.py` call builds and validates all three dropins at the
+model's **native input size**. Firmware reads input dims from the file
+(never ship a 448 build of a 320 model: exactly 2× latency — that mistake is
+why sizes live in the filename now).
 
 | lite0@320 variant | on-device | car AP (dropin, frozen val) |
 |---|---|---|

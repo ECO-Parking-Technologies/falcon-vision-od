@@ -525,17 +525,11 @@ def export_artifacts(cfg):
         jobs.append([str(export_py), str(repo / "export_tflite.py"),
                      "--checkpoint", ckpt, "--model", model])
         if (repo / "package_dropin.py").exists():
-            # no --validate flag: the packager builds then validates by default
-            # (argparse would prefix-match --validate to --validate-only).
-            # native-size dropins in BOTH quantizations: dynamic+f32 pair, then
-            # full-int8 (garage-calibrated) — the complete bench test matrix
+            # one call, clean export path, all three variants at native size:
+            # <run>.dropin-<size>-{f32,dyn,int8}.tflite
             jobs.append([str(export_py), str(repo / "package_dropin.py"),
                          "--checkpoint", ckpt, "--model", model,
                          "--input-size", native])
-            jobs.append([str(export_py), str(repo / "package_dropin.py"),
-                         "--checkpoint", ckpt, "--model", model,
-                         "--input-size", native, "--quant", "int8",
-                         "--calib-count", "256"])
     else:
         print("[export] export venv missing (run setup_export_venv.sh) — TFLite export skipped")
     for job in jobs:

@@ -207,7 +207,7 @@ def main():
 
     # ---- float32 export ----
     edge_model = litert_torch.convert(export_model, sample)
-    f32_path = art_dir / f"{art_dir.name}.f32.tflite"
+    f32_path = art_dir / f"{art_dir.name}.raw-f32.tflite"
     edge_model.export(str(f32_path))
     repack_for_old_runtimes(f32_path)  # int32 pad paddings + inline buffers for old sensor runtime
     print(f"Wrote {f32_path}")
@@ -237,7 +237,7 @@ def main():
     # ---- dynamic-range quant (int8 weights, float32 activations) ----
     # Friendly to older TFLite runtimes (the current sensor lib predates
     # new-style full-int8); ~4x smaller than f32 with float compute I/O.
-    dyn_path = art_dir / f"{art_dir.name}.dynamic.tflite"
+    dyn_path = art_dir / f"{art_dir.name}.raw-dyn.tflite"
     qt_dyn = aeq_quantizer.Quantizer(f32_path, aeq_recipe.dynamic_wi8_afp32())
     qt_dyn.quantize(serialize_to_path=dyn_path)
     repack_for_old_runtimes(dyn_path)
@@ -280,7 +280,7 @@ def main():
 
     qt = aeq_quantizer.Quantizer(f32_path, aeq_recipe.static_wi8_ai8())
     calib_result = qt.calibrate({sig_key: calib_inputs})
-    q_path = art_dir / f"{art_dir.name}.int8.tflite"
+    q_path = art_dir / f"{art_dir.name}.raw-int8.tflite"
     qt.quantize(calib_result, serialize_to_path=q_path)
     repack_for_old_runtimes(q_path)  # harmless for int8 (still needs a newer runtime)
     print(f"Wrote {q_path}")

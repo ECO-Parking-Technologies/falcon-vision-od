@@ -102,6 +102,33 @@ def load_network(model_name, num_classes, ckpt_path):
     return net.eval()
 
 
+class NCHWDropinWrapper(torch.nn.Module):
+    """[1,3,H,W] float RGB raw 0-255 -> (box_regressions, sigmoid scores).
+    The clean-export input convention (onnx2tf converts layout itself); the
+    packaging surgery bridges the firmware's uint8-NHWC to this."""
+
+    def __init__(self, net, num_classes):
+        super().__init__()
+        self.net = net
+        self.num_classes = num_classes
+        mean = torch.tensor([m * 255 for m in IMAGENET_DEFAULT_MEAN]).view(1, 3, 1, 1)
+        std = torch.tensor([s * 255 for s in IMAGENET_DEFAULT_STD]).view(1, 3, 1, 1)
+        self.register_buffer("mean", mean)
+        self.register_buffer("std", std)
+
+    def forward(self, x):
+        x = (x - self.mean) / self.std
+        class_out, box_out = self.net(x)
+        batch = x.shape[0]
+        scores = torch.cat(
+            [c.permute(0, 2, 3, 1).reshape(batch, -1, self.num_classes)
+             for c in class_out], dim=1).sigmoid()
+        boxes = torch.cat(
+            [b.permute(0, 2, 3, 1).reshape(batch, -1, 4) for b in box_out],
+            dim=1)
+        return boxes, scores
+
+
 class DropinWrapper(torch.nn.Module):
     """[1,H,W,3] float RGB in raw 0-255 scale -> (box_regressions, sigmoid scores).
 
@@ -552,15 +579,16 @@ def main():
     ap.add_argument("--input-size", type=int, default=448,
                     help="square input size baked into the packaged model "
                          "(firmware resizes frames to match; 320 = lite0 native)")
-    ap.add_argument("--quant", choices=["dynamic", "int8"], default="dynamic",
-                    help="dynamic = int8 weights/f32 activations (safe on any "
-                         "runtime); int8 = full static PTQ (fastest on CPU; "
-                         "Greg confirmed the 2.6 FW build runs int8)")
+    ap.add_argument("--variants", default="f32,dyn,int8",
+                    help="comma subset of f32,dyn,int8 (default: all three)")
     ap.add_argument("--calib-dir", type=Path, default=Path("data/images"),
-                    help="calibration image root for --quant int8")
-    ap.add_argument("--calib-count", type=int, default=64)
+                    help="calibration image root for the int8 variant")
+    ap.add_argument("--calib-count", type=int, default=256)
+    ap.add_argument("--legacy-export", action="store_true",
+                    help="old litert-torch conversion path (transpose-heavy; "
+                         "~15-20%% slower on-device) — fallback only")
     ap.add_argument("--validate-only", action="store_true",
-                    help="skip building; validate the existing packaged file")
+                    help="skip building; validate the existing packaged files")
     args = ap.parse_args()
 
     cfg = yaml.safe_load(Path("config/train_wrapper_config.yaml").read_text())
@@ -571,10 +599,14 @@ def main():
     out_dir = Path(cfg["output_dir"])
     ckpt = args.checkpoint or find_ckpt(out_dir)
     art_dir = artifact_dir(out_dir, model_name, ckpt)
-    size_tag = "" if args.input_size == 448 else str(args.input_size)
-    quant_tag = ".int8" if args.quant == "int8" else ""
-    dropin_path = art_dir / f"{art_dir.name}.dropin{size_tag}{quant_tag}.tflite"
-    dropin_f32_path = art_dir / f"{art_dir.name}.dropin{size_tag}.f32.tflite"
+    # naming: <run>.dropin-<size>-<quant>.tflite — size and quant ALWAYS
+    # explicit so nobody ships the wrong variant again
+    variants = [v.strip() for v in args.variants.split(",") if v.strip()]
+    bad = set(variants) - {"f32", "dyn", "int8"}
+    if bad:
+        sys.exit(f"unknown variants {bad} (choose from f32,dyn,int8)")
+    paths = {q: art_dir / f"{art_dir.name}.dropin-{IMAGE_SIZE}-{q}.tflite"
+             for q in variants}
 
     if not args.validate_only:
         print(f"Packaging {model_name} ({IMAGE_SIZE}x{IMAGE_SIZE}, "
@@ -594,76 +626,90 @@ def main():
         print(f"Graph: input [1,{IMAGE_SIZE},{IMAGE_SIZE},3] raw RGB, "
               f"{n_anchors} anchors, {num_classes} classes")
 
+        score_thr = float("-inf")  # same as the baseline's op options
         with tempfile.TemporaryDirectory() as td:
-            f32_raw = Path(td) / "f32.tflite"
-            q_raw = Path(td) / "quant.tflite"
-            edge_model = litert_torch.convert(wrapper, sample)
-            edge_model.export(str(f32_raw))
-            if args.quant == "int8":
-                from export_tflite import calibration_images
-                it = Interpreter(model_path=str(f32_raw))
-                it.allocate_tensors()
-                sig_key = list(it.get_signature_list().keys())[0]
-                input_name = it.get_signature_list()[sig_key]["inputs"][0]
-                calib = []
-                for f in calibration_images(args.calib_dir, args.calib_count):
-                    img = cv2.imread(str(f))
-                    if img is None:
-                        continue
-                    rgb = cv2.cvtColor(cv2.resize(img, (IMAGE_SIZE, IMAGE_SIZE)),
-                                       cv2.COLOR_BGR2RGB)
-                    # wrapper takes RAW 0-255 float NHWC (norm is in-graph)
-                    calib.append({input_name: rgb[None].astype(np.float32)})
-                print(f"Calibrating int8 on {len(calib)} garage images…")
-                qt = aeq_quantizer.Quantizer(f32_raw, aeq_recipe.static_wi8_ai8())
-                qt.quantize(qt.calibrate({sig_key: calib}), serialize_to_path=q_raw)
+            td = Path(td)
+            bodies = {}
+            if args.legacy_export:
+                f32_raw = td / "f32.tflite"
+                edge_model = litert_torch.convert(wrapper, sample)
+                edge_model.export(str(f32_raw))
+                if "f32" in variants:
+                    bodies["f32"] = f32_raw
+                if "dyn" in variants:
+                    qt = aeq_quantizer.Quantizer(f32_raw,
+                                                 aeq_recipe.dynamic_wi8_afp32())
+                    qt.quantize(serialize_to_path=td / "dyn.tflite")
+                    bodies["dyn"] = td / "dyn.tflite"
+                if "int8" in variants:
+                    sys.exit("--legacy-export has no int8 path anymore; drop "
+                             "int8 from --variants or use the clean default")
             else:
-                qt = aeq_quantizer.Quantizer(f32_raw, aeq_recipe.dynamic_wi8_afp32())
-                qt.quantize(serialize_to_path=q_raw)
+                import clean_convert as cc
+                cc.check_venvs()
+                nchw = NCHWDropinWrapper(net, num_classes).eval()
+                onnx_path = td / "model.onnx"
+                cc.to_onnx(nchw, IMAGE_SIZE, onnx_path)
+                sm_dir, f32_body = cc.onnx_to_tf(onnx_path, td / "tf")
+                if "f32" in variants:
+                    bodies["f32"] = f32_body
+                if "dyn" in variants:
+                    cc.quantize_dynamic(f32_body, td / "dyn.tflite")
+                    bodies["dyn"] = td / "dyn.tflite"
+                if "int8" in variants:
+                    print(f"int8 static PTQ (TF converter, {args.calib_count} "
+                          "calibration frames)…")
+                    cc.quantize_int8(sm_dir, IMAGE_SIZE, args.calib_dir,
+                                     args.calib_count, td / "int8.tflite")
+                    bodies["int8"] = td / "int8.tflite"
+            for q, body in bodies.items():
+                apply_surgery(body, paths[q], anchors, num_classes, score_thr)
+                print(f"Wrote {paths[q].name} "
+                      f"({paths[q].stat().st_size / 1e6:.1f} MB)")
 
-            score_thr = float("-inf")  # same as the baseline's op options
-            apply_surgery(f32_raw, dropin_f32_path, anchors, num_classes, score_thr)
-            apply_surgery(q_raw, dropin_path, anchors, num_classes, score_thr)
-        print(f"Wrote {dropin_f32_path} ({dropin_f32_path.stat().st_size / 1e6:.1f} MB)")
-        print(f"Wrote {dropin_path} ({dropin_path.stat().st_size / 1e6:.1f} MB)")
-
-    for p in (dropin_path, args.baseline):
+    for p in list(paths.values()) + [args.baseline]:
         if not p.exists():
             sys.exit(f"missing {p}")
 
-    print(f"\n=== validating {dropin_path.name} vs {args.baseline} ===")
-    ok, stats = validate(dropin_path, args.baseline, args.car_image,
-                         args.empty_image, args.score_threshold)
-    print("\n--- float32 variant sanity ---")
-    ok_f32, _ = validate(dropin_f32_path, args.baseline, args.car_image,
-                         args.empty_image, args.score_threshold)
-    if not (ok and ok_f32):
+    QUANT_DESC = {
+        "f32": "float32 (no quantization)",
+        "dyn": "dynamic-range: int8 weights / f32 activations (ai-edge-quantizer)",
+        "int8": "full-int8 static PTQ (TF-2.8 converter, garage-calibrated)",
+    }
+    all_ok = True
+    for q in variants:
+        print(f"\n=== validating {paths[q].name} vs {args.baseline} ===")
+        ok, stats = validate(paths[q], args.baseline, args.car_image,
+                             args.empty_image, args.score_threshold)
+        all_ok &= ok
+        update_manifest(art_dir, f"dropin_{IMAGE_SIZE}_{q}", {
+            "model": model_name,
+            "checkpoint": str(ckpt),
+            "file": paths[q].name,
+            "size_bytes": paths[q].stat().st_size,
+            "num_classes": num_classes,
+            "quantization": QUANT_DESC[q],
+            "export": ("legacy litert-torch" if args.legacy_export
+                       else "clean: onnx -> onnx2tf (clean_convert.py)"),
+            "contract": {
+                "input": f"[1,{IMAGE_SIZE},{IMAGE_SIZE},3] uint8 RGB raw bytes "
+                         "(in-graph dequant/quant + ImageNet norm)",
+                "outputs": "TFLite_Detection_PostProcess: boxes [1,25,4] norm "
+                           "ymin,xmin,ymax,xmax; classes [1,25] 0-based; "
+                           "scores [1,25]; num_detections [1]",
+                "postprocess": f"max_detections={MAX_DETECTIONS}, "
+                               f"iou={NMS_IOU_THRESHOLD}, score_threshold=-inf, "
+                               "scales=1.0 (matches baseline)",
+                "baseline": str(args.baseline),
+            },
+            "validation": stats,
+        })
+    if not all_ok:
         sys.exit("\nVALIDATION FAILED (files left in place for debugging)")
-
-    update_manifest(art_dir, f"tflite_dropin{quant_tag.replace('.', '_')}", {
-        "model": model_name,
-        "checkpoint": str(ckpt),
-        "file": dropin_path.name,
-        "file_f32": dropin_f32_path.name,
-        "size_bytes": dropin_path.stat().st_size,
-        "size_bytes_f32": dropin_f32_path.stat().st_size,
-        "num_classes": num_classes,
-        "quantization": ("ai-edge-quantizer static_wi8_ai8 (full-int8 static PTQ, "
-                         "garage-calibrated)" if args.quant == "int8" else
-                         "ai-edge-quantizer dynamic_wi8_afp32 (int8 weights, f32 activations)"),
-        "contract": {
-            "input": f"[1,{IMAGE_SIZE},{IMAGE_SIZE},3] uint8 RGB raw bytes "
-                     "(quant scale=1.0 zp=0; in-graph dequant + ImageNet norm)",
-            "outputs": "TFLite_Detection_PostProcess: boxes [1,25,4] norm ymin,xmin,ymax,xmax; "
-                       "classes [1,25] 0-based; scores [1,25]; num_detections [1]",
-            "postprocess": f"max_detections={MAX_DETECTIONS}, iou={NMS_IOU_THRESHOLD}, "
-                           "score_threshold=-inf, scales=1.0 (matches baseline)",
-            "baseline": str(args.baseline),
-        },
-        "validation": stats,
-    })
     update_latest_symlink(art_dir)
-    print(f"\nVALIDATION PASSED\nDeliverable: {dropin_path}")
+    print("\nVALIDATION PASSED\nDeliverables:")
+    for q in variants:
+        print(f"  {paths[q]}")
 
 
 if __name__ == "__main__":
