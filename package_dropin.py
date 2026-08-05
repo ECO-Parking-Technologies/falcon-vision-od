@@ -271,6 +271,11 @@ def apply_surgery(src: Path, dst: Path, anchors: np.ndarray, num_classes: int,
     graph_in = int(sg.inputs[0])
     in_t = sg.tensors[graph_in]
     in_shape = list(in_t.shape)
+    # clean (onnx2tf) exports keep an NCHW graph input; the firmware contract
+    # is NHWC uint8 bytes, so bridge via one input-sized TRANSPOSE (~free)
+    nchw = len(in_shape) == 4 and in_shape[1] == 3 and in_shape[3] != 3
+    if nchw:
+        in_shape = [in_shape[0], in_shape[2], in_shape[3], in_shape[1]]
     quant = schema.QuantizationParametersT()
     if in_t.type == schema.TensorType.FLOAT32:
         # raw byte value == float value the graph expects
@@ -293,10 +298,35 @@ def apply_surgery(src: Path, dst: Path, anchors: np.ndarray, num_classes: int,
         sys.exit(f"unsupported graph input type {in_t.type}")
     u8_idx = _add_tensor(sg, "serving_default_images:0", in_shape,
                          schema.TensorType.UINT8, buffer=0, quant=quant)
+    if nchw:
+        # uint8 NHWC -> (dequant|quant) -> NHWC tmp -> TRANSPOSE -> NCHW input
+        tmp_quant = None
+        if in_t.type == schema.TensorType.INT8:
+            tmp_quant = schema.QuantizationParametersT()
+            tmp_quant.scale = list(in_t.quantization.scale)
+            tmp_quant.zeroPoint = list(in_t.quantization.zeroPoint)
+        tmp_idx = _add_tensor(sg, "images_nhwc", in_shape, in_t.type,
+                              quant=tmp_quant)
+        perm_buf = schema.BufferT()
+        perm_buf.data = np.frombuffer(
+            np.array([0, 3, 1, 2], dtype=np.int32).tobytes(), dtype=np.uint8)
+        model.buffers.append(perm_buf)
+        perm_idx = _add_tensor(sg, "images_perm", [4], schema.TensorType.INT32,
+                               buffer=len(model.buffers) - 1)
+        tr_code = _add_opcode(model, builtin=schema.BuiltinOperator.TRANSPOSE,
+                              version=2)
+        tr = schema.OperatorT()
+        tr.opcodeIndex = tr_code
+        tr.inputs = [tmp_idx, perm_idx]
+        tr.outputs = [graph_in]
+        sg.operators.insert(0, tr)
+        bridge_target = tmp_idx
+    else:
+        bridge_target = graph_in
     bridge = schema.OperatorT()
     bridge.opcodeIndex = bridge_code
     bridge.inputs = [u8_idx]
-    bridge.outputs = [graph_in]
+    bridge.outputs = [bridge_target]
     sg.operators.insert(0, bridge)  # operators must stay in execution order
     sg.inputs = [u8_idx]
     float_in = graph_in  # signature fix-up below
