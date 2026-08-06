@@ -45,10 +45,12 @@ unified store (data/images, 117k frames, 39 garages)
 Six architectures, identical data (94,628 train / frozen 5k val), identical
 step budget — visualization: `experiments/falcon-vision-effdet/ladder.html`.
 Car AP as %: lite0 47.6 · lite1 53.9 · **lite2 59.3** · lite3 60.0 ·
-lite4 60.8 · **d1 62.7** (d2 pending). Person %: 2.1/3.2/5.4/5.3/7.3/6.1 vs
-the prod-baseline gate of 3.8. Findings: knee at lite2; d1 beats lite4 with
-half the params (d-series architecture > scaled lite; provisional FVS2/NPU
-pick); person AP is capacity/resolution-bound, clears the gate from lite2 up.
+lite4 60.8 · **d1 62.7** · d2 62.5 (ladder COMPLETE 2026-08-06). Person %:
+2.1/3.2/5.4/5.3/7.3/6.1/2.2 vs the prod-baseline gate of 3.8 (d2's person
+collapse = bs4/2-real-epoch schedule artifact). Findings: knee at lite2;
+**car accuracy saturates ~62.5%** — d1 beats lite4 with half the params and
+matches d2 (d-series architecture > scaled lite; **d1 = FVS2/NPU pick**);
+person AP is capacity/resolution-bound, clears the gate from lite2 up.
 
 **Deployment targets**: PRIMARY = lite1 `dropin-384-int8` (3.1 s CM3 bench,
 2× production's car accuracy); speed fallback = lite0 `dropin-320-int8`

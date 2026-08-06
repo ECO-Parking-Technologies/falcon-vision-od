@@ -171,9 +171,11 @@ annotating volume. Deep docs: [docs/training-and-experiments.md](docs/training-a
   +0.4 only. But pure-garage models hallucinate on out-of-domain scenes
   (desk test: 91% "cars" on furniture) — catastrophic forgetting of world
   knowledge; COCO replay remains the fix if that ever matters in prod.
-- **Capacity ladder (94,628 train imgs each, 12 epochs)**:
-  lite0 47.6 · lite1 53.9 · lite2 59.3 · lite3 60.0 · lite4 60.8 · d1 62.7.
-  Person %: 2.1 / 3.2 / 5.4 / 5.3 / 7.3 / 6.1. d2 pending.
+- **Capacity ladder (94,628 train imgs each) — COMPLETE 2026-08-06**:
+  lite0 47.6 · lite1 53.9 · lite2 59.3 · lite3 60.0 · lite4 60.8 · d1 62.7 ·
+  d2 62.5. Person %: 2.1 / 3.2 / 5.4 / 5.3 / 7.3 / 6.1 / 2.2 (d2's person
+  collapse = schedule artifact: bs4 → 2 real epochs). **Car accuracy
+  saturates ~62.5% — d1 confirmed FVS2/NPU pick** (d2 buys nothing).
   - Knee at lite2 (+12 over lite0, then <1/tier) — Greg's off-the-shelf-era
     intuition reproduced under domain training.
   - **d1 beats lite4 with half the params** — d-series architecture (deeper
@@ -222,9 +224,12 @@ annotating volume. Deep docs: [docs/training-and-experiments.md](docs/training-a
   keys `dropin_<size>_<q>` / `raw_<q>` / `torchscript`. One
   `package_dropin.py` call builds+validates all three variants;
   `--legacy-export` = old path (no int8).
-- **KNOWN OPEN**: lite4 + d1 clean-int8 packaging FAILS (suspected: d-series
-  SiLU vs TF2.8 converter; ts.pt spot-checks prove checkpoints fine). d2
-  will hit the same at auto-export. Diagnose before relying on big-tier int8.
+- Big-tier packaging RESOLVED 2026-08-05/06: lite4's "failure" was the
+  validation fixture (at 640 it sees a real vehicle through a wall opening in
+  the empty reference frame → empty-check now fails only >0.40, the sensor's
+  strong-confirm threshold); d1's TFQ dies on 'illegal scale: INF' → packager
+  auto-falls-back to AEQ static (manifest records which); d2's TFQ worked
+  fine. All 7 tiers now have validated dropin-<size>-{f32,dyn,int8} sets.
 
 ## 10. On-device latency ledger (CM3 bench, all measured)
 
