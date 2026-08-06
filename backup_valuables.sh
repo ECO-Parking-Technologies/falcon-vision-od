@@ -30,3 +30,19 @@ rsync -a --info=progress2 --copy-links \
   "$DEST/data/"
 
 echo "backup complete -> $DEST ($(du -sh "$DEST" | cut -f1))"
+
+# Optional offsite leg: Azure Blob via rclone, credential in RAM only.
+# One-time Azure setup: storage account + private container, generate a
+# CONTAINER-scoped SAS (racwl, long expiry). Then per run:
+#     read -s AZURE_SAS_URL && export AZURE_SAS_URL
+#     ./backup_valuables.sh <dest>
+# The SAS URL never touches disk (on-the-fly rclone remote, no config file).
+if [ -n "${AZURE_SAS_URL:-}" ]; then
+  command -v rclone >/dev/null || { echo "rclone not installed (sudo apt install rclone) — skipping cloud leg"; exit 0; }
+  echo "syncing to Azure Blob…"
+  rclone sync "$DEST" ":azureblob,sas_url=${AZURE_SAS_URL}:" \
+    --azureblob-access-tier Cool --info=progress2
+  echo "cloud sync complete"
+else
+  echo "(no AZURE_SAS_URL set — cloud leg skipped)"
+fi
