@@ -52,6 +52,15 @@
           "false",
           "true"
         ]
+      },
+      {
+        "name": "spot",
+        "mutable": true,
+        "input_type": "text",
+        "default_value": "",
+        "values": [
+          ""
+        ]
       }
     ]
   },
@@ -89,6 +98,15 @@
         "values": [
           "false",
           "true"
+        ]
+      },
+      {
+        "name": "spot",
+        "mutable": true,
+        "input_type": "text",
+        "default_value": "",
+        "values": [
+          ""
         ]
       }
     ]
@@ -128,6 +146,15 @@
           "false",
           "true"
         ]
+      },
+      {
+        "name": "spot",
+        "mutable": true,
+        "input_type": "text",
+        "default_value": "",
+        "values": [
+          ""
+        ]
       }
     ]
   },
@@ -166,6 +193,15 @@
           "false",
           "true"
         ]
+      },
+      {
+        "name": "spot",
+        "mutable": true,
+        "input_type": "text",
+        "default_value": "",
+        "values": [
+          ""
+        ]
       }
     ]
   },
@@ -203,6 +239,15 @@
         "values": [
           "false",
           "true"
+        ]
+      },
+      {
+        "name": "spot",
+        "mutable": true,
+        "input_type": "text",
+        "default_value": "",
+        "values": [
+          ""
         ]
       }
     ]

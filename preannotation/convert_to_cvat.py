@@ -101,12 +101,20 @@ def _checkbox(name):
             "default_value": "false", "values": ["false", "true"]}
 
 
+def _text(name):
+    return {"name": name, "mutable": True, "input_type": "text",
+            "default_value": "", "values": [""]}
+
+
 def label_attributes(name):
     """Roadmap annotation spec (docs/road-map/Data Preparation.md):
-    Occluded on everything; InEcoParkingSpot + InMotion on vehicles only."""
+    Occluded on everything; InEcoParkingSpot + InMotion on vehicles only.
+    `spot` (text) = the portal parking-space name, prefilled by
+    label_inspot.py from calibration-matched spot polygons."""
     attrs = [_checkbox("Occluded")]
     if name in VEHICLE_CLASSES:
         attrs = [_checkbox("InEcoParkingSpot"), _checkbox("InMotion")] + attrs
+        attrs.append(_text("spot"))
     return attrs
 
 
