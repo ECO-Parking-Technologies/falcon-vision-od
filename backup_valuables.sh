@@ -14,9 +14,11 @@ DEST="${1:?usage: backup_valuables.sh <destination-dir>}"
 REPO="$(cd "$(dirname "$0")" && pwd)"
 mkdir -p "$DEST"
 
-rsync -a --info=progress2 \
-  "$REPO/runs" \
-  "$DEST/"
+# trailing slashes + --copy-links: runs/ and weights/ are symlinks to the
+# Expansion drive — copy contents, not the links
+rsync -a --info=progress2 --copy-links \
+  "$REPO/runs/" \
+  "$DEST/runs/"
 
 rsync -a --info=progress2 --copy-links \
   "$REPO/data/images" \

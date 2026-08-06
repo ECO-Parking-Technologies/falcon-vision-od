@@ -37,7 +37,11 @@ annotating volume. Deep docs: [docs/training-and-experiments.md](docs/training-a
 | `<data>/onnx2tf-venv` | clean converter (onnx2tf + TF 2.19) — `setup_convert_venvs.sh` |
 | `<data>/tf28-venv` | TF **2.8.4** — int8 static PTQ with sensor-era op versions AND the old-runtime (2.6-proxy) load/invoke compat check (+ cv2-headless) |
 
-- `data/` → `/media/lopezemi/Expansion/falcon-vision-od-data` (1.8T disk).
+- `data/`, `runs/`, `weights/` are all symlinks onto the Expansion drive
+  (`/media/lopezemi/Expansion/falcon-vision-od-data/…`, 1.8T) — the home
+  nvme holds only code + venvs. Backups (`backup_valuables.sh <dest>`)
+  should therefore target the home disk or an external/off-machine location,
+  NOT Expansion.
 - GPU: single RTX 3090 (24 GB). Before heavy work:
   `nvidia-smi; pgrep -f "run_training|run_preannotation"`.
   (Considered upgrades: 5060-class cards are DOWNGRADES — less bandwidth/VRAM;
