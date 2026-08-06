@@ -756,8 +756,9 @@ def main(args=None):
     output_dir = ""
     if args.local_rank == 0:
         output_base = args.output if args.output else "./output"
-        exp_name = "-".join([datetime.now().strftime("%Y%m%d-%H%M%S"), args.model])
-        output_dir = utils.get_outdir(output_base, "train", exp_name)
+        # session layout: --output is <session>/<level>; artifacts land in
+        # <level>/train directly (no nested timestamp — the session carries it)
+        output_dir = utils.get_outdir(output_base, "train")
         decreasing = True if eval_metric == "loss" else False
         saver = utils.CheckpointSaver(
             model,

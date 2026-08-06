@@ -1,13 +1,14 @@
 """Shared artifact layout for exported models.
 
-Layout (under the training output_dir):
+Layout (under the training output_dir) — run-first so `ls` sorts
+chronologically and matches the train/ tree one-to-one:
 
-    artifacts/<model_name>/<run_name>/
-        model.ts.pt        TorchScript trace (float, for preannotation)
-        model.f32.tflite   float32 TFLite
-        model.int8.tflite  full-int8 TFLite (static PTQ)
-        manifest.json      what/how/from-which-checkpoint + parity metrics
-    artifacts/<model_name>/latest -> <run_name>/   (stable path for configs)
+    artifacts/<run_name>/
+        <run>.dropin-<size>-{f32,dyn,int8}.tflite   sensor-ready packages
+        <run>.raw-{f32,dyn,int8}.tflite             raw exports (dev/eval)
+        <run>.ts.pt                                 TorchScript trace
+        manifest.json                               provenance + validation
+    artifacts/latest-<model_name> -> <run_name>/    (stable path for configs)
 
 run_name is the training run directory name (e.g. 20250506-142806-tf_efficientdet_lite0)
 or "adhoc-<checkpoint stem>" for checkpoints outside the train/ tree.
@@ -19,23 +20,36 @@ from pathlib import Path
 
 
 def run_name_for_checkpoint(ckpt: Path) -> str:
-    parent = ckpt.parent
-    if parent.parent.name == "train":
-        return parent.name
+    """<session-dt>-<model> file prefix. Session layout:
+    <output>/<session-dt>/<level>/train/model_best.pth.tar"""
+    train_dir = ckpt.parent
+    if train_dir.name == "train":
+        level_dir = train_dir.parent
+        return f"{level_dir.parent.name}-{level_dir.name}"
     return f"adhoc-{ckpt.stem}"
 
 
 def artifact_dir(output_dir: Path, model_name: str, ckpt: Path) -> Path:
-    d = Path(output_dir) / "artifacts" / model_name / run_name_for_checkpoint(ckpt)
+    """export/ sibling of the checkpoint's train/ dir; adhoc checkpoints get
+    <output>/adhoc-<stem>/export."""
+    train_dir = ckpt.parent
+    if train_dir.name == "train":
+        d = train_dir.parent / "export"
+    else:
+        d = Path(output_dir) / f"adhoc-{ckpt.stem}" / "export"
     d.mkdir(parents=True, exist_ok=True)
     return d
 
 
-def update_latest_symlink(art_dir: Path) -> None:
-    latest = art_dir.parent / "latest"
+def update_latest_symlink(art_dir: Path, model_name: str = None) -> None:
+    """<output>/latest-<model> -> <session>/<level>/export (relative)."""
+    level_dir = art_dir.parent
+    root = level_dir.parent.parent
+    name = model_name or level_dir.name.split("-")[0]
+    latest = root / f"latest-{name}"
     if latest.is_symlink() or latest.exists():
         latest.unlink()
-    latest.symlink_to(art_dir.name)
+    latest.symlink_to(art_dir.relative_to(root))
 
 
 def git_commit() -> str:

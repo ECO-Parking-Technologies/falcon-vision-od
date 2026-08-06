@@ -17,18 +17,26 @@ from pathlib import Path
 import yaml
 
 
-def collect(output_dir):
+def collect(output_dir, session=None):
+    """Session layout: <output>/<session-dt>/<level>/train/summary.csv."""
     runs = []
-    for sc in sorted(output_dir.glob("train/*/summary.csv")):
-        d = sc.parent
+    pattern = f"{session}/*/train/summary.csv" if session else "*/*/train/summary.csv"
+    for sc in sorted(output_dir.glob(pattern)):
+        d = sc.parent                     # …/<level>/train
+        lvl = d.parent                    # …/<level>
         args_y = yaml.safe_load((d / "args.yaml").read_text()) if (d / "args.yaml").exists() else {}
         rows = [{k: float(v) if k != "epoch" else int(v) for k, v in r.items()}
                 for r in csv.DictReader(open(sc))]
+        manifest = None
+        for mf in (d / "run.json", lvl / "run.json"):
+            if mf.exists():
+                manifest = json.loads(mf.read_text())
+                break
         run = {
-            "name": d.name,
+            "name": f"{lvl.parent.name}/{lvl.name}",
             "model": args_y.get("model", "?"),
             "summary": rows,
-            "manifest": json.loads((d / "run.json").read_text()) if (d / "run.json").exists() else None,
+            "manifest": manifest,
             "metrics": json.loads((d / "coco_metrics.json").read_text()) if (d / "coco_metrics.json").exists() else None,
         }
         runs.append(run)
@@ -214,7 +222,7 @@ function barchart(el, items){
 
 /* ---------- table + wiring ---------- */
 function rowvals(r){ const m=r.manifest||{}, best=r.summary.reduce((a,b)=>b.eval_map>a.eval_map?b:a);
-  return { name:r.name.slice(0,15), model:r.model, label_source:m.label_source||'—',
+  return { name:r.name, model:r.model, label_source:m.label_source||'—',
     train_images:m.train_images??null, epochs_run:r.summary.length,
     car_ap:m.car_ap??null, car_ap_large:m.car_ap_large??null,
     person_ap:m.person_ap??null, best_eval_map:best.eval_map }; }
@@ -250,7 +258,7 @@ function legend(el, entries){ el.innerHTML='';
 function render(){
   renderTable();
   const r=DATA[sel];
-  document.getElementById('t-loss').textContent='Loss — '+r.name.slice(0,15);
+  document.getElementById('t-loss').textContent='Loss — '+r.name;
   const loss=[{name:'train loss',color:S(1),pts:r.summary.map(e=>[e.epoch,e.train_loss])},
               {name:'eval loss',color:S(2),pts:r.summary.map(e=>[e.epoch,e.eval_loss])}];
   legend(document.getElementById('lg-loss'), loss);
@@ -264,7 +272,7 @@ function render(){
       .map(([n,v])=>({name:n,value:v.ap,note:v.gt_boxes+' gt boxes, AP-large '+fmt(v.ap_large)}))); }
   else { cls.innerHTML='<div class="mut">no coco_metrics.json — backfill: python3 run_metrics.py &lt;run dir&gt;</div>'; note.textContent=''; }
   const shown=DATA.slice(-8);
-  const all=shown.map((x,j)=>({name:x.name.slice(0,15),color:S(j+1),
+  const all=shown.map((x,j)=>({name:x.name,color:S(j+1),
     pts:x.summary.map(e=>[e.epoch,e.eval_map])}));
   legend(document.getElementById('lg-all'), all);
   linechart(document.getElementById('c-all'), all);
@@ -285,15 +293,19 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--output-dir", type=Path,
                     default=Path("experiments/falcon-vision-effdet"))
+    ap.add_argument("--session", default=None,
+                    help="restrict to one session dir and write its own "
+                         "<session>/report.html")
     a = ap.parse_args()
-    runs = collect(a.output_dir)
+    runs = collect(a.output_dir, a.session)
     if not runs:
-        raise SystemExit(f"no runs with summary.csv under {a.output_dir}/train/")
+        raise SystemExit(f"no runs with summary.csv under {a.output_dir}")
     html = (TEMPLATE
             .replace("__DATA__", json.dumps(runs))
             .replace("__NRUNS__", str(len(runs)))
             .replace("__WHEN__", datetime.now().strftime("%Y-%m-%d %H:%M")))
-    out = a.output_dir / "report.html"
+    out = (a.output_dir / a.session / "report.html") if a.session \
+        else (a.output_dir / "report.html")
     out.write_text(html)
     print(f"[report] {len(runs)} runs -> {out}")
 

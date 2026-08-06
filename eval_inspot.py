@@ -41,8 +41,25 @@ def main():
     from pycocotools.coco import COCO
     from pycocotools.cocoeval import COCOeval
 
-    man = json.loads((args.run_dir / "run.json").read_text())
-    val = json.loads((Path(man["split_dir"]) / "annotations" /
+    # accept a <session>/<level> dir or its train/ subdir; find manifest,
+    # predictions, and the split (session layout first, legacy fallback)
+    rd = args.run_dir
+    train_dir = rd / "train" if (rd / "train").exists() else rd
+    man = {}
+    for mf in (train_dir / "run.json", train_dir.parent / "run.json"):
+        if mf.exists():
+            man = json.loads(mf.read_text())
+            break
+    split = None
+    for cand in (train_dir.parent / "split", train_dir.parent.parent / "split",
+                 Path(man.get("split_dir", "/nonexistent"))):
+        if (cand / "annotations" / "instances_val2017.json").exists():
+            split = cand
+            break
+    if split is None:
+        raise SystemExit(f"no split found for {rd}")
+    args.run_dir = train_dir  # val_predictions.json lives beside the checkpoints
+    val = json.loads((split / "annotations" /
                       "instances_val2017.json").read_text())
     imgs = {i["id"]: i["file_name"] for i in val["images"]}
     kept = ign = miss = 0

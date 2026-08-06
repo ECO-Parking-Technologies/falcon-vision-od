@@ -201,14 +201,32 @@ def prepare_and_filter_coco_dataset(cfg, split_dir):
     return coco_root
 
 
-def merge_and_split_datasets(config):
+def data_params(config):
+    """The knobs that change WHAT data a split contains — a level may reuse a
+    session-shared split only when these match."""
+    return {
+        "base_data_path": str(Path(config["base_data_path"]).resolve()),
+        "split_by": config.get("split_by", "frame"),
+        "split_salt": str(config.get("split_salt", "falcon-v1")),
+        "train_val_split": config.get("train_val_split", 0.8),
+        "seed": config.get("seed", 42),
+        "val_max_images": config.get("val_max_images"),
+        "max_train_images": config.get("max_train_images"),
+        "include_coco": config.get("include_coco", True),
+        "coco_max_frac": config.get("coco_max_frac"),
+        "audited_exports_dir": config.get("audited_exports_dir", "data/cvat_exports"),
+    }
+
+
+def merge_and_split_datasets(config, split_dir=None):
     # absolute: symlink targets must not depend on the split dir's location
     base_path = Path(config["base_data_path"]).resolve()
     output_dir = Path(config["output_dir"])
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    split_name = f"split_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-    split_dir = output_dir / split_name
+    if split_dir is None:
+        split_dir = output_dir / f"split_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    split_dir = Path(split_dir)
 
     # COCO‐style train/val image folders
     train_img_dir = split_dir / "train2017"
@@ -373,6 +391,7 @@ def merge_and_split_datasets(config):
     ann_dir.mkdir(parents=True, exist_ok=True)
     shutil.copy(split_dir / "train.json", ann_dir / "instances_train2017.json")
     shutil.copy(split_dir / "val.json", ann_dir / "instances_val2017.json")
+    save_coco_annotations(data_params(config), split_dir / "params.json")
 
     print(f"[INFO] Output written to: {split_dir}")
     return {
@@ -384,22 +403,61 @@ def merge_and_split_datasets(config):
 
 
 def run_training(cfg_path):
+    """Default entry: trains EVERY level in cfg['levels'] (e.g. [lite0, …,
+    d2]) inside ONE session dir — the sweep across levels is the default
+    behavior. Single-model configs (`model:` only) still work."""
     cfg = load_config(cfg_path)
-    out = merge_and_split_datasets(cfg)
-    split_dir = out["train"].parent
+    levels = cfg.get("levels")
+    if not levels:
+        return run_one(dict(cfg), cfg_path)
+    session = cfg.get("session") or datetime.now().strftime("%Y%m%d-%H%M%S")
+    overrides = cfg.get("batch_size_overrides") or {}
+    for i, short in enumerate(levels, 1):
+        c = dict(cfg)
+        c["session"] = session
+        c["model"] = short if short.startswith("tf_") else f"tf_efficientdet_{short}"
+        if short in overrides:
+            c["batch_size"] = overrides[short]
+        c["label_source"] = f"{cfg.get('label_source', 'run')}-{short}"
+        print(f"\n{'='*70}\n[session {session}] level {i}/{len(levels)}: {short}"
+              f"\n{'='*70}")
+        run_one(c, cfg_path)
 
-    # 1) optionally mix in filtered COCO 2017 (skip for pure garage runs —
-    #    e.g. SAM3 distillation, where 60k COCO images would drown the domain)
-    if cfg.get("include_coco", True):
-        prepare_and_filter_coco_dataset(cfg, split_dir)
 
-    # 2) build & remap your label map → contiguous IDs
-    orig_map = load_label_map()  # {orig_id: name}
-    new_label_map, id_map = remap_label_map(orig_map)  # new_id→name, orig→new
+def run_one(cfg, cfg_path):
+    output_dir = Path(cfg["output_dir"])
+
+    # session layout: <output>/<session-dt>/<level[-tag]>/{train,split,export}
+    # (one launch = one session dir; sweep points share it via cfg["session"])
+    session = cfg.get("session") or datetime.now().strftime("%Y%m%d-%H%M%S")
+    short = cfg["model"].replace("tf_efficientdet_", "")
+    level = short + (f"-{cfg['run_tag']}" if cfg.get("run_tag") else "")
+    lvl_dir = output_dir / session / level
+    lvl_dir.mkdir(parents=True, exist_ok=True)
+    print(f"[INFO] run dir: {lvl_dir}")
+
+    # split placement: session-shared when the data config is vanilla (every
+    # level trains on the identical frozen split — built once, reused);
+    # level-local when a point modifies the data (subsets, COCO mixing)
+    data_local = bool(cfg.get("max_train_images")) or cfg.get("include_coco", True)
+    split_dir = (lvl_dir / "split") if data_local else (output_dir / session / "split")
+
+    params = data_params(cfg)
+    pfile = split_dir / "params.json"
+    reuse = (pfile.exists() and json.loads(pfile.read_text()) == params
+             and (split_dir / "train.json").exists())
+    orig_map = load_label_map()
+    new_label_map, id_map = remap_label_map(orig_map)
     num_classes = len(new_label_map)
-
-    # 3) rewrite the JSON files on‐disk so the dataset loader sees [0..num_classes)
-    remap_split_jsons(split_dir, id_map, new_label_map)
+    if reuse:
+        print(f"[INFO] reusing session split: {split_dir}")
+    else:
+        merge_and_split_datasets(cfg, split_dir=split_dir)
+        # optionally mix in filtered COCO 2017 (level-local splits only)
+        if cfg.get("include_coco", True):
+            prepare_and_filter_coco_dataset(cfg, split_dir)
+        # rewrite JSONs so the dataset loader sees contiguous [1..num_classes]
+        remap_split_jsons(split_dir, id_map, new_label_map)
 
     n_train = len(load_coco_annotations(split_dir / "train.json")["images"])
     n_val = len(load_coco_annotations(split_dir / "val.json")["images"])
@@ -427,7 +485,7 @@ def run_training(cfg_path):
         "--epochs",
         str(cfg["epochs"]),
         "--output",
-        cfg["output_dir"],
+        str(lvl_dir),  # train.py writes <level>/train/
         str(split_dir),  # this root now has remapped JSONs + symlinks
     ]
     if cfg.get("pretrained"):
@@ -459,50 +517,57 @@ def run_training(cfg_path):
         "epochs": cfg["epochs"],
         "batch_size": cfg["batch_size"],
     }
-    save_coco_annotations(manifest, split_dir / "run.json")
-    print(f"[INFO] run manifest: {split_dir / 'run.json'} "
+    save_coco_annotations(manifest, lvl_dir / "run.json")
+    print(f"[INFO] run manifest: {lvl_dir / 'run.json'} "
           f"({n_train} train / {n_val} val images)")
 
     # 6) invoke train
     args_ns = train.parser.parse_args(cli_args)
     train.main(args_ns)
 
-    # 7) per-class/size metrics + final run.json into the new run dir
-    runs = sorted(Path(cfg["output_dir"]).glob("train/*/summary.csv"),
-                  key=lambda p: p.stat().st_mtime)
-    if runs:
+    # 7) per-class/size metrics + final run.json into the run dir
+    if (lvl_dir / "train" / "summary.csv").exists():
         import run_metrics
         try:
-            run_metrics.compute(runs[-1].parent)
+            run_metrics.compute(lvl_dir / "train")
         except Exception as e:
             print(f"[metrics] FAILED ({e}) — backfill later with "
-                  f"run_metrics.py {runs[-1].parent}")
+                  f"run_metrics.py {lvl_dir / 'train'}")
 
-    # 8) refresh the static dashboard
+    # 8) refresh dashboards: global + this session's own report.html
     try:
-        import build_report
         subprocess.run([sys.executable, str(Path(__file__).parent / "build_report.py"),
                         "--output-dir", cfg["output_dir"]], check=False)
+        subprocess.run([sys.executable, str(Path(__file__).parent / "build_report.py"),
+                        "--output-dir", cfg["output_dir"], "--session", session],
+                       check=False)
     except Exception as e:
         print(f"[report] skipped ({e})")
 
     # 9) auto-export artifacts from this run's best checkpoint
     if cfg.get("export_after_training", True):
-        export_artifacts(cfg)
+        ckpt = lvl_dir / "train" / "model_best.pth.tar"
+        if ckpt.exists():
+            export_artifacts(cfg, ckpt)
+        else:
+            print("[export] no best checkpoint found, skipping export")
 
 
-def export_artifacts(cfg):
-    """Run all exporters against the newest best checkpoint so the full
-    artifact set (TorchScript, f32/dynamic/int8 TFLite, drop-in package)
-    is ready to pull without manual steps."""
+def export_artifacts(cfg, ckpt=None):
+    """Run all exporters against a best checkpoint so the full artifact set
+    (TorchScript, TFLite variants, drop-in packages) is ready without manual
+    steps. Default: newest <session>/<level>/train/model_best.pth.tar."""
     import subprocess
 
     out_dir = Path(cfg["output_dir"])
-    ckpts = sorted(out_dir.glob("train/*/model_best.pth.tar"), key=lambda p: p.stat().st_mtime)
-    if not ckpts:
-        print("[export] no best checkpoint found, skipping export")
-        return
-    ckpt = str(ckpts[-1])
+    if ckpt is None:
+        ckpts = sorted(out_dir.glob("*/*/train/model_best.pth.tar"),
+                       key=lambda p: p.stat().st_mtime)
+        if not ckpts:
+            print("[export] no best checkpoint found, skipping export")
+            return
+        ckpt = ckpts[-1]
+    ckpt = str(ckpt)
     repo = Path(__file__).parent
     export_py = repo / "falcon-vision-od-export-venv" / "bin" / "python"
     env = {"PYTHONPATH": str(repo), "PATH": "/usr/bin:/bin", "CUDA_VISIBLE_DEVICES": ""}

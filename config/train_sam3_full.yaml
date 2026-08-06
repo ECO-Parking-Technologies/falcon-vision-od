@@ -1,5 +1,11 @@
-# Full-store SAM3 distillation base config (round 0 + learning-curve sweep).
-# The sweep wrapper (run_sweep.py) derives per-point configs from this.
+# Full-store SAM3 distillation base config.
+# `levels` drives the DEFAULT flow: one launch = one session dir
+# (<output>/<datetime>/) training every listed level, sharing one split.
+# Comment levels down to a subset for smaller sessions.
+# (run_sweep.py remains for data-SIZE sweeps / arm-B experiments.)
+levels: [lite0, lite1, lite2, lite3, lite4, d1, d2]
+batch_size_overrides: {lite4: 6, d1: 6, d2: 4}
+
 base_data_path: data/images
 annotated_files: auto          # every <garage>/<sensor>/preannotations.coco.json
 split_by: sensor-hash          # FROZEN split: hash(garage/sensor) decides side,

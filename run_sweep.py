@@ -27,9 +27,12 @@ from run_training_from_config import run_training
 DEFAULT_SIZES = ["6000", "12000", "25000", "50000", "full"]
 
 
-def one_point(base_cfg, scratch, tag, overrides):
+def one_point(base_cfg, scratch, tag, overrides, session):
     cfg = copy.deepcopy(base_cfg)
+    cfg.pop("levels", None)          # sweep points are single-model
     cfg.update(overrides)
+    cfg["session"] = session          # one session dir per sweep launch
+    cfg["run_tag"] = tag              # level dir becomes <model>-<tag>
     cfg["label_source"] = f'{base_cfg.get("label_source", "sam3")}-{tag}'
     p = scratch / f"sweep_{tag}.yaml"
     p.write_text(yaml.safe_dump(cfg))
@@ -53,15 +56,25 @@ def main():
     base_cfg = yaml.safe_load(Path(args.config).read_text())
     scratch = Path(base_cfg["output_dir"]) / "sweep_configs"
     scratch.mkdir(parents=True, exist_ok=True)
+    from datetime import datetime
+    session = datetime.now().strftime("%Y%m%d-%H%M%S")
 
     if args.models:
-        # capacity ladder: one full-store point per architecture, all exported
+        print("[sweep] note: level ladders are now the DEFAULT flow — put a "
+              "`levels:` list in the config and call run_training_from_config "
+              "directly. Running here anyway…")
         BS = {"tf_efficientdet_lite4": 6, "tf_efficientdet_d1": 6,
               "tf_efficientdet_d2": 4}  # keep the 3090 out of OOM at 640/768
         for name in [m.strip() for m in args.models.split(",") if m.strip()]:
-            one_point(base_cfg, scratch, name.replace("tf_efficientdet_", ""),
-                      {"model": name, "export_after_training": True,
-                       "batch_size": BS.get(name, base_cfg["batch_size"])})
+            short = name.replace("tf_efficientdet_", "")
+            cfg = dict(base_cfg)
+            cfg.pop("levels", None)
+            cfg.update({"model": name, "export_after_training": True,
+                        "session": session,
+                        "batch_size": BS.get(name, base_cfg["batch_size"])})
+            p = scratch / f"ladder_{short}.yaml"
+            p.write_text(yaml.safe_dump(cfg))
+            run_training(str(p))
         print("\n[sweep] ladder done — open the dashboard: "
               f"{base_cfg['output_dir']}/report.html")
         return
@@ -72,10 +85,11 @@ def main():
         over = {"export_after_training": last}
         if s != "full":
             over["max_train_images"] = int(s)
-        one_point(base_cfg, scratch, s, over)
+        one_point(base_cfg, scratch, s, over, session)
 
     if args.arm_b:
-        one_point(base_cfg, scratch, "full-coco",
+        one_point(base_cfg, scratch, "full-coco", session=session,
+                  overrides=
                   {"include_coco": True, "export_after_training": True})
 
     print("\n[sweep] done — open the dashboard: "

@@ -1,0 +1,27 @@
+# Round-2 experiment: lite1 accuracy push (deployment target).
+# Levers vs the ladder baseline (in-spot car AP 69.1 / AP50 88.7):
+#   - EMA weights (--model-ema): typically +0.5-1 AP free
+#   - 3x gradient-step budget (75k vs 25k): schedule was prove-out sized
+# Judge with eval_inspot.py; commit recipe changes only on a measured win.
+levels: [lite1]
+
+base_data_path: data/images
+annotated_files: auto
+split_by: sensor-hash
+split_salt: falcon-v1
+train_val_split: 0.8
+val_max_images: 5000
+seed: 42
+include_coco: false
+label_source: sam3-full-r2
+
+output_dir: experiments/falcon-vision-effdet
+pretrained: True
+pretrained_backbone: True
+batch_size: 8
+epochs: auto
+train_steps_budget: 75000
+min_epochs: 2
+amp: true
+extra_args: "--workers 4 --model-ema"
+export_after_training: true

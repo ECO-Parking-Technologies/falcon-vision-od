@@ -72,6 +72,13 @@ def compute(run_dir, batch_size=16):
     split_root = Path(args_yaml["root"])
     if not split_root.is_absolute():
         split_root = Path(__file__).parent / split_root
+    if not split_root.exists():
+        # session layout / relocated runs: split lives beside train/ or at
+        # the session level
+        for cand in (run_dir.parent / "split", run_dir.parent.parent / "split"):
+            if cand.exists():
+                split_root = cand
+                break
     ckpt = run_dir / "model_best.pth.tar"
     preds = run_dir / "val_predictions.json"
     if not preds.exists() and not split_root.exists():
@@ -96,11 +103,13 @@ def compute(run_dir, batch_size=16):
     rows = list(csv.DictReader(open(run_dir / "summary.csv")))
     best = max(rows, key=lambda r: float(r["eval_map"]))
 
-    # merge the split's provenance manifest if present
+    # merge the provenance manifest (level dir in the session layout;
+    # split dir in the legacy layout)
     manifest = {}
-    split_manifest = split_root / "run.json"
-    if split_manifest.exists():
-        manifest = json.loads(split_manifest.read_text())
+    for src in (run_dir.parent / "run.json", split_root / "run.json"):
+        if src.exists() and src != run_dir / "run.json":
+            manifest = json.loads(src.read_text())
+            break
     manifest.update({
         "run_dir": str(run_dir),
         "model": args_yaml["model"],
