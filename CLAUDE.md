@@ -144,8 +144,8 @@ annotating volume. Deep docs: [docs/training-and-experiments.md](docs/training-a
   stats and oversample. Never change augs mid-sweep.
 - Tracking: TensorBoard per run (`train/<ts>/tb/`), `run_metrics.py` →
   per-class + size-banded `coco_metrics.json` + `run.json` provenance;
-  dashboard `experiments/falcon-vision-effdet/report.html` auto-refreshes;
-  ladder page `experiments/falcon-vision-effdet/ladder.html`.
+  dashboard `runs/report.html` auto-refreshes;
+  ladder page `runs/ladder.html`.
 
 ## 7. Metrics discipline
 

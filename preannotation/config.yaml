@@ -12,7 +12,7 @@ grounding_dino:
   model_id: IDEA-Research/grounding-dino-base
   box_threshold: 0.25
   text_threshold: 0.20
-model_file: experiments/falcon-vision-effdet/latest-lite0
+model_file: runs/latest-lite0
 pretrained_backbone: True
 
 base_data_path: data/images   # the unified store (portal-canonical garages)

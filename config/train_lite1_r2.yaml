@@ -15,7 +15,7 @@ seed: 42
 include_coco: false
 label_source: sam3-full-r2
 
-output_dir: experiments/falcon-vision-effdet
+output_dir: runs
 pretrained: True
 pretrained_backbone: True
 batch_size: 8

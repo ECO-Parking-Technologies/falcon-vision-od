@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Static experiment dashboard: scans experiments/<name>/train/*/ and writes
+"""Static experiment dashboard: scans runs/<name>/train/*/ and writes
 one self-contained report.html (no server, no CDN — open from the filesystem).
 
 Per run it reads summary.csv + args.yaml (always present) and run.json +
 coco_metrics.json (written by run_metrics.py; older runs may lack them).
 Regenerated automatically after every training run; run manually any time:
 
-    python3 build_report.py [--output-dir experiments/falcon-vision-effdet]
+    python3 build_report.py [--output-dir experiments]
 """
 import argparse
 import csv
@@ -281,7 +281,7 @@ function render(){
     for(const v of [e.epoch,fmt(e.train_loss,4),fmt(e.eval_loss,4),fmt(e.eval_map,4)]){
       const td=document.createElement('td'); td.textContent=v; tr.appendChild(td); }
     et.appendChild(tr); }
-  document.getElementById('rundir').textContent='run dir: '+(r.manifest?.run_dir||('experiments/…/train/'+r.name));
+  document.getElementById('rundir').textContent='run dir: '+(r.manifest?.run_dir||('runs/…/train/'+r.name));
 }
 render();
 addEventListener('resize',()=>render());
@@ -292,7 +292,7 @@ addEventListener('resize',()=>render());
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--output-dir", type=Path,
-                    default=Path("experiments/falcon-vision-effdet"))
+                    default=Path("runs"))
     ap.add_argument("--session", default=None,
                     help="restrict to one session dir and write its own "
                          "<session>/report.html")

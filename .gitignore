@@ -144,7 +144,7 @@ falcon-vision-od-venv
 falcon-vision-od-export-venv
 
 # output directory
-experiments/
+runs/
 
 # downloaded checkpoints
 weights/

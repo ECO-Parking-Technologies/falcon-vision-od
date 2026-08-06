@@ -15,7 +15,7 @@ scored 0.09 mean while car AP was 0.44). Read car AP / person AP, not the mean.
 Called automatically after training by run_training_from_config.py; run
 manually to backfill an old run:
 
-    python3 run_metrics.py experiments/falcon-vision-effdet/train/<run>/
+    python3 run_metrics.py runs/train/<run>/
 """
 import argparse
 import csv

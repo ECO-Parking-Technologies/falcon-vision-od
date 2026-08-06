@@ -24,7 +24,7 @@ coco_root: /media/lopezemi/Expansion/falcon-vision-ml/artifacts/data_pipeline/co
 coco_max_frac: 0.25            # COCO <= 25% of the mixed train set
 label_source: sam3-drafts-full
 
-output_dir: experiments/falcon-vision-effdet
+output_dir: runs
 model: tf_efficientdet_lite0
 pretrained: True               # fine-tune from the COCO detector checkpoint
 pretrained_backbone: True

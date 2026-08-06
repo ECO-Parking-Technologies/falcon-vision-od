@@ -87,8 +87,27 @@ variant entry, e.g. `{name: lite1-coco, model: lite1, include_coco: true}`)
 trains into one datetime session dir with a shared split.
 
 Every run auto-produces: per-class metrics (`coco_metrics.json`, `run.json`),
-TensorBoard logs, a refreshed dashboard (`experiments/falcon-vision-effdet/report.html`),
+TensorBoard logs, a refreshed dashboard (`runs/report.html`),
 and packaged sensor artifacts. Read **per-class car/person AP, never the 6-class mean**.
+
+### The `runs/` directory
+
+One launch = one datetime session; everything a session produced lives under it:
+
+```
+runs/
+├── 20260810-090000/            ← a session (e.g. levels: [lite0 … d2])
+│   ├── split/                    the data split — built once, shared by every level
+│   ├── lite0/
+│   │   ├── train/               checkpoints, tb/, summary.csv, run.json, metrics
+│   │   └── export/              dropin-<size>-{f32,dyn,int8}.tflite, raw-*, ts.pt, manifest
+│   ├── lite1/ … d2/             one dir per level (variants: lite1-coco/, lite0-25k/,
+│   │                            which carry their own local split/)
+│   └── report.html              this session's report
+├── latest-<level>/              symlink to that level's newest export/
+├── report.html                  global dashboard (all sessions)
+└── ladder.html                  architecture comparison
+```
 
 ### 6. Evaluation
 

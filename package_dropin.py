@@ -571,7 +571,7 @@ def main():
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--checkpoint", type=Path, default=None,
-                    help="default: newest experiments/.../train/*/model_best.pth.tar")
+                    help="default: newest runs/<session>/<level>/train/model_best.pth.tar")
     ap.add_argument("--model", default=None,
                     help="effdet model name (default: `model` from train_wrapper_config.yaml)")
     ap.add_argument("--num-classes", type=int, default=None)

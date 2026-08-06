@@ -6,7 +6,7 @@ InEcoParkingSpot (preannotation/label_inspot.py); all other GT becomes a COCO
 ignore region (iscrowd=1) so background/distant cars neither reward nor
 penalize. Requires the run's val_predictions.json (run_metrics.py creates it).
 
-    python3 eval_inspot.py experiments/falcon-vision-effdet/train/<run-dir>
+    python3 eval_inspot.py runs/train/<run-dir>
 """
 import argparse
 import json

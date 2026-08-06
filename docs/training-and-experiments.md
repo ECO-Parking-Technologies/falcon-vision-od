@@ -31,7 +31,7 @@ unified store (data/images, 117k frames, 39 garages)
 - **Tracking**: TensorBoard scalars per run (`train/<ts>/tb/`), per-class +
   size-banded `coco_metrics.json` (run_metrics.py), `run.json` provenance
   manifest, and a self-contained dashboard —
-  `experiments/falcon-vision-effdet/report.html` — regenerated after every run.
+  `runs/report.html` — regenerated after every run.
 - **Eval harnesses**: `validate.py` (PyTorch), `eval_tflite_coco.py` (any
   TFLite incl. the prod baseline; 4th arg `ours` for our class indices),
   `preannotation/render_drafts.py` (visual browse of drafts).
@@ -43,7 +43,7 @@ unified store (data/images, 117k frames, 39 garages)
 ## Capacity ladder & deployment targets (2026-08-05)
 
 Six architectures, identical data (94,628 train / frozen 5k val), identical
-step budget — visualization: `experiments/falcon-vision-effdet/ladder.html`.
+step budget — visualization: `runs/ladder.html`.
 Car AP as %: lite0 47.6 · lite1 53.9 · **lite2 59.3** · lite3 60.0 ·
 lite4 60.8 · **d1 62.7** · d2 62.5 (ladder COMPLETE 2026-08-06). Person %:
 2.1/3.2/5.4/5.3/7.3/6.1/2.2 vs the prod-baseline gate of 3.8 (d2's person

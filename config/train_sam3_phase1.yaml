@@ -10,7 +10,7 @@ seed: 42
 include_coco: false
 label_source: sam3-drafts-phase1
 
-output_dir: experiments/falcon-vision-effdet
+output_dir: runs
 model: tf_efficientdet_lite0
 pretrained: True             # fine-tune from the COCO detector checkpoint
 pretrained_backbone: True
