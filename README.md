@@ -79,10 +79,12 @@ Audited exports saved to `data/cvat_exports/` override the drafts in every train
 ### 5. Training
 
 ```bash
-python3 run_training_from_config.py --config config/train_sam3_full.yaml   # one full-store run
-python3 run_sweep.py --config config/train_sam3_full.yaml                  # data-size sweep
-python3 run_sweep.py --config ... --models tf_efficientdet_lite1,tf_efficientdet_d1   # capacity ladder
+python3 run_training_from_config.py --config config/train_sam3_full.yaml
 ```
+
+The config's `levels:` list drives the session — every listed level (or
+variant entry, e.g. `{name: lite1-coco, model: lite1, include_coco: true}`)
+trains into one datetime session dir with a shared split.
 
 Every run auto-produces: per-class metrics (`coco_metrics.json`, `run.json`),
 TensorBoard logs, a refreshed dashboard (`experiments/falcon-vision-effdet/report.html`),

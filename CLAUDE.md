@@ -39,7 +39,7 @@ annotating volume. Deep docs: [docs/training-and-experiments.md](docs/training-a
 
 - `data/` → `/media/lopezemi/Expansion/falcon-vision-od-data` (1.8T disk).
 - GPU: single RTX 3090 (24 GB). Before heavy work:
-  `nvidia-smi; pgrep -f "run_sweep|run_training|run_preannotation"`.
+  `nvidia-smi; pgrep -f "run_training|run_preannotation"`.
   (Considered upgrades: 5060-class cards are DOWNGRADES — less bandwidth/VRAM;
   real options = used 4090 ~2×, 5090 ~3×/32GB, or a second used 3090 on this
   X570 board — second slot is chipset x4, fine for independent jobs; needs
@@ -127,9 +127,12 @@ annotating volume. Deep docs: [docs/training-and-experiments.md](docs/training-a
 - COCO mixing: `include_coco` + `coco_root` (READ-ONLY legacy archive — no
   20 GB re-download) + `coco_max_frac` cap + train-only (val stays pure
   garage). 70,082 COCO images contain our classes (262k persons).
-- `run_sweep.py`: `--sizes 6000,…,full [--arm-b]` (size sweep) or
-  `--models a,b,c` (capacity ladder, one full-store run each, per-model batch
-  sizes to dodge OOM at 640/768).
+- Multi-level sessions are the DEFAULT: the config's `levels:` list (names
+  or variant dicts with overrides — `{name: lite0-25k, model: lite0,
+  max_train_images: 25000}`) trains everything into ONE session dir
+  (`<output>/<datetime>/<level>/{train,export}` + session-shared `split/`
+  reused across levels; data-modified entries get local splits).
+  run_sweep.py is retired — its jobs are config entries now.
 - **Augmentation today**: ONLY hflip + RandomResizePad scale-jitter 0.1–2×
   (aspect-preserving ≈ letterbox, conveniently matching FW preprocessing) +
   random interpolation. `--color-jitter` exists but is COMMENTED OUT in

@@ -138,7 +138,7 @@ def parity(tag, ref_boxes, ref_scores, boxes, scores, topk=100):
 
 def find_ckpt(output_dir: Path) -> Path:
     ckpts = sorted(
-        output_dir.glob("train/*/model_best.pth.tar"), key=lambda p: p.stat().st_mtime
+        output_dir.glob("*/*/train/model_best.pth.tar"), key=lambda p: p.stat().st_mtime
     )
     if not ckpts:
         sys.exit(f"No model_best.pth.tar found under {output_dir}/train")

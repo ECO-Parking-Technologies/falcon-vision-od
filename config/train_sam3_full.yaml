@@ -1,9 +1,12 @@
-# Full-store SAM3 distillation base config.
-# `levels` drives the DEFAULT flow: one launch = one session dir
-# (<output>/<datetime>/) training every listed level, sharing one split.
-# Comment levels down to a subset for smaller sessions.
-# (run_sweep.py remains for data-SIZE sweeps / arm-B experiments.)
+# Full-store SAM3 distillation master config.
+# `levels` drives everything: one launch = one session dir
+# (<output>/<datetime>/) training every listed entry, sharing one split.
+# An entry is a level name, or a dict with overrides for variant points:
+#   - {name: lite1-coco, model: lite1, include_coco: true, coco_max_frac: 0.25}
+#   - {name: lite0-25k, model: lite0, max_train_images: 25000}
+# (variant/data-modified entries automatically get their own local split)
 levels: [lite0, lite1, lite2, lite3, lite4, d1, d2]
+#  - {name: lite1-coco, model: lite1, include_coco: true}   # person-gate arm
 batch_size_overrides: {lite4: 6, d1: 6, d2: 4}
 
 base_data_path: data/images

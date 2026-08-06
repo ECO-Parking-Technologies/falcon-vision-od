@@ -412,14 +412,25 @@ def run_training(cfg_path):
         return run_one(dict(cfg), cfg_path)
     session = cfg.get("session") or datetime.now().strftime("%Y%m%d-%H%M%S")
     overrides = cfg.get("batch_size_overrides") or {}
-    for i, short in enumerate(levels, 1):
+    for i, entry in enumerate(levels, 1):
+        # entry: "lite1" OR {name: lite1-coco, model: lite1, <any cfg keys>}
+        if isinstance(entry, str):
+            entry = {"name": entry}
+        entry = dict(entry)
+        name = entry.pop("name")
+        model_short = entry.pop("model", name.split("-")[0])
         c = dict(cfg)
+        c.update(entry)               # per-entry overrides (include_coco, …)
         c["session"] = session
-        c["model"] = short if short.startswith("tf_") else f"tf_efficientdet_{short}"
-        if short in overrides:
-            c["batch_size"] = overrides[short]
-        c["label_source"] = f"{cfg.get('label_source', 'run')}-{short}"
-        print(f"\n{'='*70}\n[session {session}] level {i}/{len(levels)}: {short}"
+        c["model"] = (model_short if model_short.startswith("tf_")
+                      else f"tf_efficientdet_{model_short}")
+        if name != model_short:
+            c["run_tag"] = name[len(model_short) + 1:] if \
+                name.startswith(model_short + "-") else name
+        if "batch_size" not in entry and model_short in overrides:
+            c["batch_size"] = overrides[model_short]
+        c["label_source"] = f"{cfg.get('label_source', 'run')}-{name}"
+        print(f"\n{'='*70}\n[session {session}] level {i}/{len(levels)}: {name}"
               f"\n{'='*70}")
         run_one(c, cfg_path)
 

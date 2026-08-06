@@ -72,7 +72,7 @@ DEFAULT_EMPTY_IMAGE = _VAL_ROOT / "fv1b999e-camera1-20210401-000203-01.png"
 
 def find_ckpt(output_dir: Path) -> Path:
     ckpts = sorted(
-        output_dir.glob("train/*/model_best.pth.tar"), key=lambda p: p.stat().st_mtime
+        output_dir.glob("*/*/train/model_best.pth.tar"), key=lambda p: p.stat().st_mtime
     )
     if not ckpts:
         sys.exit(f"No model_best.pth.tar found under {output_dir}/train")
