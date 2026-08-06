@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # OPTIONAL one-time setup: unattended daily backup (systemd user timer).
-# Backs up to the NAS nightly at ~03:00 (with catch-up if the machine was
-# off), retries built in, per-machine subdir <hostname>-<machine-id8>.
+# Workstation-friendly: fires 30 min after login (never during boot), then
+# every 24h while the machine stays up; disk/CPU access is idle-priority so
+# it yields to interactive work and training runs. Retries built in,
+# per-machine subdir <hostname>-<machine-id8>.
 # Optionally also syncs to Azure Blob — that requires persisting a
 # container-scoped SAS to disk (0600, this machine only), which this script
 # asks explicit consent for; decline and cloud backups stay manual.
@@ -34,7 +36,8 @@ After=network-online.target
 [Service]
 Type=oneshot
 ExecStart=$REPO/backup_valuables.sh --from-config
-Nice=10
+Nice=19
+CPUSchedulingPolicy=idle
 IOSchedulingClass=idle
 EOF
 
@@ -43,9 +46,9 @@ cat > "$UNIT_DIR/falcon-backup.timer" <<'EOF'
 Description=Daily Falcon Vision OD backup
 
 [Timer]
-OnCalendar=*-*-* 03:00
-RandomizedDelaySec=15m
-Persistent=true
+# Workstation pattern: fire well after login (not at boot), then daily while up.
+OnStartupSec=30min
+OnUnitActiveSec=24h
 
 [Install]
 WantedBy=timers.target
