@@ -115,6 +115,19 @@ utils.add_bool_arg(
     parser, "soft-nms", default=None, help="override model config for soft-nms"
 )
 parser.add_argument(
+    "--anchor-scale",
+    type=float,
+    default=None,
+    help="override model config anchor_scale (checkpoint consumers must "
+    "apply the same value — run_metrics reads it back from args.yaml)",
+)
+parser.add_argument(
+    "--fpn-name",
+    type=str,
+    default=None,
+    help="override model config fpn_name (e.g. bifpn_sum for plain-sum BiFPN)",
+)
+parser.add_argument(
     "--val-skip",
     type=int,
     default=0,
@@ -629,6 +642,8 @@ def main(args=None):
             legacy_focal=args.legacy_focal,
             jit_loss=args.jit_loss,
             soft_nms=args.soft_nms,
+            anchor_scale=args.anchor_scale,
+            fpn_name=args.fpn_name,
             bench_labeler=args.bench_labeler,
             checkpoint_path=args.initial_checkpoint,
         )

@@ -502,10 +502,18 @@ def run_one(cfg, cfg_path):
 
     # split placement: session-shared when the data config is vanilla (every
     # level trains on the identical frozen split — built once, reused);
-    # level-local when a point modifies the data (subsets, COCO mixing)
-    data_local = (bool(cfg.get("max_train_images")) or cfg.get("include_coco", True)
-                  or bool(cfg.get("roi_crop")))
+    # level-local when a point modifies the data (subsets, COCO mixing).
+    # roi_crop splits ARE shareable (arms varying only model config reuse
+    # one set of crops) — the params guard below catches real mismatches.
+    data_local = bool(cfg.get("max_train_images")) or cfg.get("include_coco", True)
     split_dir = (lvl_dir / "split") if data_local else (output_dir / session / "split")
+    if not data_local:
+        pfile = split_dir / "params.json"
+        if pfile.exists() and json.loads(pfile.read_text()) != data_params(cfg):
+            # a shared split exists but was built with different data params
+            # (e.g. a different roi_tensor): fall back to a level-local split
+            # instead of clobbering it
+            split_dir = lvl_dir / "split"
 
     params = data_params(cfg)
     pfile = split_dir / "params.json"
@@ -553,6 +561,10 @@ def run_one(cfg, cfg_path):
         str(lvl_dir),  # train.py writes <level>/train/
         str(split_dir),  # this root now has remapped JSONs + symlinks
     ]
+    if cfg.get("anchor_scale") is not None:
+        cli_args += ["--anchor-scale", str(cfg["anchor_scale"])]
+    if cfg.get("fpn_name"):
+        cli_args += ["--fpn-name", str(cfg["fpn_name"])]
     if cfg.get("pretrained"):
         cli_args.append("--pretrained")
     if not cfg.get("pretrained_backbone"):
@@ -578,6 +590,9 @@ def run_one(cfg, cfg_path):
         "include_coco": cfg.get("include_coco", True),
         "max_train_images": cfg.get("max_train_images"),
         "label_source": cfg.get("label_source", "unspecified"),
+        "roi_crop": bool(cfg.get("roi_crop", False)),
+        "anchor_scale": cfg.get("anchor_scale"),
+        "fpn_name": cfg.get("fpn_name"),
         "git_commit": git_rev,
         "epochs": cfg["epochs"],
         "batch_size": cfg["batch_size"],
@@ -611,9 +626,16 @@ def run_one(cfg, cfg_path):
 
     # 9) auto-export artifacts from this run's best checkpoint
     if cfg.get("export_after_training", True):
-        ckpt = lvl_dir / "train" / "model_best.pth.tar"
-        if ckpt.exists():
-            export_artifacts(cfg, ckpt)
+        if cfg.get("anchor_scale") is not None or cfg.get("fpn_name"):
+            # packaging tools don't take these overrides yet: an
+            # anchor_scale-trained checkpoint packaged with default anchors
+            # decodes boxes silently wrong. Plumb before exporting.
+            print("[export] SKIPPED: model-config overrides "
+                  "(anchor_scale/fpn_name) are not plumbed into the "
+                  "packagers yet — export this checkpoint manually once "
+                  "package_dropin supports the flags")
+        elif (lvl_dir / "train" / "model_best.pth.tar").exists():
+            export_artifacts(cfg, lvl_dir / "train" / "model_best.pth.tar")
         else:
             print("[export] no best checkpoint found, skipping export")
 

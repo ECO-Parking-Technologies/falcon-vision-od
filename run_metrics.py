@@ -92,6 +92,12 @@ def compute(run_dir, batch_size=16):
                "--num-classes", str(args_yaml["num_classes"]),
                "--checkpoint", str(ckpt), "-b", str(batch_size),
                "--results", str(preds)]
+        # model-config overrides the run trained with MUST be applied when
+        # rebuilding the model, or boxes decode against the wrong anchors
+        if args_yaml.get("anchor_scale") is not None:
+            cmd += ["--anchor-scale", str(args_yaml["anchor_scale"])]
+        if args_yaml.get("fpn_name"):
+            cmd += ["--fpn-name", str(args_yaml["fpn_name"])]
         print("[metrics] scoring val split:", " ".join(cmd[1:]))
         subprocess.run(cmd, check=True)
 

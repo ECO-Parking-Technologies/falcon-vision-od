@@ -1,0 +1,45 @@
+# Weekend round-2 arm sweep — independent one-lever arms off the ROI base,
+# all judged Monday by eval_inspot.py (winners compose into the next recipe).
+# Assumes the lite1-roi verdict favored ROI training; if not, flip roi_crop
+# per-arm before launch.
+#
+# Ordering matters for split sharing: the lite1 arms (roi_tensor 384) go
+# first and share the session split; the lite2 arms (448) mismatch the
+# shared params and auto-fall-back to level-local splits.
+#
+# Rough wall-clock on the 3090: 3×3.2h (lite1) + 4.3h (3x) + 2×7h (lite2)
+# ≈ 28 h.
+levels:
+  - {name: lite1-roi-a20, model: lite1, roi_crop: true, roi_tensor: 384, anchor_scale: 2.0}
+  - {name: lite1-roi-a15, model: lite1, roi_crop: true, roi_tensor: 384, anchor_scale: 1.5}
+  - {name: lite1-roi-ema, model: lite1, roi_crop: true, roi_tensor: 384,
+     extra_args: "--workers 4 --model-ema"}
+  - {name: lite1-roi-3x,  model: lite1, roi_crop: true, roi_tensor: 384,
+     train_steps_budget: 75000}
+  - {name: lite2-roi,     model: lite2, roi_crop: true, roi_tensor: 448}
+  - {name: lite2-roi-sum, model: lite2, roi_crop: true, roi_tensor: 448,
+     fpn_name: bifpn_sum}   # the <=4s latency challenger (plain-sum BiFPN)
+
+base_data_path: data/images
+annotated_files: auto
+split_by: sensor-hash
+split_salt: falcon-v1          # never change
+train_val_split: 0.8
+val_max_images: 5000
+seed: 42
+
+include_coco: false
+label_source: sam3-drafts-roi-arms
+
+output_dir: runs
+pretrained: True
+pretrained_backbone: True
+batch_size: 8
+epochs: auto
+train_steps_budget: 25000
+min_epochs: 2
+amp: true
+extra_args: "--workers 4"
+export_after_training: false   # experiment arms — winners get exported when
+                               # they graduate (anchor/fpn arms need packager
+                               # flag plumbing first anyway)
