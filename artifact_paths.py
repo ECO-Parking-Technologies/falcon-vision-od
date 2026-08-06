@@ -20,13 +20,25 @@ from pathlib import Path
 
 
 def run_name_for_checkpoint(ckpt: Path) -> str:
-    """<session-dt>-<model> file prefix. Session layout:
-    <output>/<session-dt>/<level>/train/model_best.pth.tar"""
+    """<session-dt>-<level>[-roi] file prefix. Session layout:
+    <output>/<session-dt>/<level>/train/model_best.pth.tar
+
+    The level name usually carries its variant tags (lite1-roi, lite1-a20);
+    if the run manifest says roi_crop but the level name doesn't say so,
+    -roi is appended — artifact names must never hide the input geometry."""
     train_dir = ckpt.parent
-    if train_dir.name == "train":
-        level_dir = train_dir.parent
-        return f"{level_dir.parent.name}-{level_dir.name}"
-    return f"adhoc-{ckpt.stem}"
+    if train_dir.name != "train":
+        return f"adhoc-{ckpt.stem}"
+    level_dir = train_dir.parent
+    name = f"{level_dir.parent.name}-{level_dir.name}"
+    manifest = level_dir / "run.json"
+    if "roi" not in level_dir.name and manifest.exists():
+        try:
+            if json.loads(manifest.read_text()).get("roi_crop"):
+                name += "-roi"
+        except Exception:
+            pass
+    return name
 
 
 def artifact_dir(output_dir: Path, model_name: str, ckpt: Path) -> Path:

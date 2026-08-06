@@ -49,7 +49,7 @@ from ai_edge_litert.interpreter import Interpreter
 from ai_edge_quantizer import quantizer as aeq_quantizer
 from ai_edge_quantizer import recipe as aeq_recipe
 
-from artifact_paths import artifact_dir, update_latest_symlink, update_manifest
+from artifact_paths import artifact_dir, run_name_for_checkpoint, update_latest_symlink, update_manifest
 from config.label_loader import load_label_map
 from effdet import create_model, get_efficientdet_config
 from effdet.anchors import Anchors
@@ -604,13 +604,14 @@ def main():
     out_dir = Path(cfg["output_dir"])
     ckpt = args.checkpoint or find_ckpt(out_dir)
     art_dir = artifact_dir(out_dir, model_name, ckpt)
+    run_name = run_name_for_checkpoint(Path(ckpt))
     # naming: <run>.dropin-<size>-<quant>.tflite — size and quant ALWAYS
     # explicit so nobody ships the wrong variant again
     variants = [v.strip() for v in args.variants.split(",") if v.strip()]
     bad = set(variants) - {"f32", "dyn", "int8"}
     if bad:
         sys.exit(f"unknown variants {bad} (choose from f32,dyn,int8)")
-    paths = {q: art_dir / f"{art_dir.name}.dropin-{IMAGE_SIZE}-{q}.tflite"
+    paths = {q: art_dir / f"{run_name}.dropin-{IMAGE_SIZE}-{q}.tflite"
              for q in variants}
 
     if not args.validate_only:

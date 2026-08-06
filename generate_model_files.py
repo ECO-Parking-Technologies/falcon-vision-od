@@ -12,14 +12,14 @@ from pathlib import Path
 import torch
 import yaml
 
-from artifact_paths import artifact_dir, update_latest_symlink, update_manifest
+from artifact_paths import artifact_dir, run_name_for_checkpoint, update_latest_symlink, update_manifest
 from config.label_loader import load_label_map
 from effdet import create_model
 from effdet.config.model_config import efficientdet_model_param_dict as MODEL_CONFIG
 
 
 def load_cfg():
-    cfg_p = Path(__file__).parent / "config" / "train_wrapper_config.yaml"
+    cfg_p = Path(__file__).parent / "config" / "train_sam3_full.yaml"
     if not cfg_p.is_file():
         sys.exit(f"Config not found: {cfg_p}")
     return yaml.safe_load(cfg_p.read_text())
@@ -79,7 +79,7 @@ def main():
     dummy = torch.randn(1, 3, H, W)
     traced = torch.jit.trace(base, dummy, strict=False)
     art_dir = artifact_dir(out_dir, model_name, ckpt)
-    ts_path = art_dir / f"{art_dir.name}.ts.pt"
+    ts_path = art_dir / f"{run_name_for_checkpoint(Path(ckpt))}.ts.pt"
     traced.save(ts_path)
     print("Saved TorchScript model to:", ts_path)
 
