@@ -1,22 +1,23 @@
 #!/usr/bin/env python3
-"""Stamp InEcoParkingSpot onto SAM3 draft boxes using portal spot polygons.
+"""Stamp InEcoParkingSpot onto SAM3 draft boxes — calibration-aware.
 
-Walks every per-sensor preannotations.coco.json, matches each frame to its
-(garage, sensor, cameraN) polygon set from data/spot_polygons.json, and adds
-per-annotation CVAT-compatible attributes:
+Spot calibrations change over time, so polygons are matched per-frame:
+1. EXACT: the frame's filename embeds its snapshot run id
+   (<sensor>-<run8>-<mac>-cameraN) -> that run's own polygon set.
+2. FALLBACK: frames without a run match use the sensor-camera's timeline
+   entry nearest the frame's capture month (store path <YYYY>/<MM>/).
 
-    "attributes": {"InEcoParkingSpot": true/false}   (+ "spot": name when true)
+Adds CVAT-compatible per-annotation attributes:
+    "attributes": {"InEcoParkingSpot": bool, ["spot": name]}
+Rule: box CENTER inside a polygon OR intersection >= 30% of box area
+(mirrors the fusion overlap regime). Idempotent — rerun re-stamps.
 
-Rule: in-spot when the box CENTER lies inside a polygon OR intersection
-covers >= 30% of the box area (mirrors the fusion overlap regime). Polygons
-are normalized [0-1]; boxes are absolute pixels. Idempotent — rerunning
-re-stamps from scratch.
-
-    python3 preannotation/label_inspot.py [--store data/images] [--dry-run]
+    python3 preannotation/label_inspot.py [--dry-run]
 """
 import argparse
 import json
 import re
+from datetime import datetime
 from pathlib import Path
 
 
@@ -33,16 +34,46 @@ def point_in_poly(x, y, poly):
     return inside
 
 
-def clip_poly_area_over_box(poly, bx, by, bw, bh):
-    """Approximate intersection(poly, box)/box_area by grid sampling (5x5)."""
+def overlap_frac(poly, bx, by, bw, bh):
+    """intersection(poly, box)/box_area by 5x5 grid sampling."""
     hits = 0
     for i in range(5):
         for j in range(5):
-            px = bx + (i + 0.5) / 5 * bw
-            py = by + (j + 0.5) / 5 * bh
-            if point_in_poly(px, py, poly):
+            if point_in_poly(bx + (i + 0.5) / 5 * bw,
+                             by + (j + 0.5) / 5 * bh, poly):
                 hits += 1
     return hits / 25.0
+
+
+def frame_run8(file_name):
+    """Extract the snapshot run id (8 hex) from a store filename."""
+    m = re.search(r"-([0-9a-f]{8})-[0-9a-f_]{17}-camera\d", Path(file_name).name)
+    return m.group(1) if m else None
+
+
+def frame_month(file_name):
+    m = re.search(r"/(\d{4})/(\d{2})/", file_name)
+    return datetime(int(m.group(1)), int(m.group(2)), 15) if m else None
+
+
+def spaces_for(garage_polys, key, run8, month):
+    """Exact run match first; else nearest-in-time timeline entry."""
+    if run8 and run8 in garage_polys.get("runs", {}):
+        sp = garage_polys["runs"][run8].get(key)
+        if sp:
+            return sp, "exact"
+    tl = garage_polys.get("timeline", {}).get(key, [])
+    if tl and month:
+        best = min(tl, key=lambda e: abs(
+            (datetime.fromisoformat(e["at"][:19]) - month).total_seconds()))
+        sp = garage_polys["runs"].get(best["run"], {}).get(key)
+        if sp:
+            return sp, "timeline"
+    if tl:  # no month either: newest known calibration
+        sp = garage_polys["runs"].get(tl[-1]["run"], {}).get(key)
+        if sp:
+            return sp, "latest"
+    return None, "none"
 
 
 def main():
@@ -54,26 +85,26 @@ def main():
     args = ap.parse_args()
 
     polys = json.loads(args.polygons.read_text())
-    n_files = n_boxes = n_inspot = n_nomatch = 0
+    n_files = n_boxes = n_inspot = 0
+    match_counts = {"exact": 0, "timeline": 0, "latest": 0, "none": 0}
 
     for jf in sorted(args.store.glob("*/*/preannotations.coco.json")):
         garage, sensor = jf.parent.parent.name, jf.parent.name
-        gmap = polys.get(garage, {})
+        gp = polys.get(garage, {})
         coco = json.loads(jf.read_text())
         imgs = {im["id"]: im for im in coco["images"]}
-        changed = False
         for a in coco["annotations"]:
             im = imgs.get(a["image_id"])
             if im is None:
                 continue
-            m = re.search(r"camera(\d+)", im["file_name"])
-            key = f"{sensor}|camera{m.group(1)}" if m else None
-            spaces = gmap.get(key or "", [])
             n_boxes += 1
+            cam = re.search(r"camera(\d+)", im["file_name"])
+            key = f"{sensor}|camera{cam.group(1)}" if cam else ""
+            spaces, how = spaces_for(gp, key, frame_run8(im["file_name"]),
+                                     frame_month(im["file_name"]))
+            match_counts[how] += 1
             if not spaces:
-                n_nomatch += 1
                 a["attributes"] = {"InEcoParkingSpot": False}
-                changed = True
                 continue
             W, H = im.get("width", 640), im.get("height", 480)
             x, y, w, h = a["bbox"]
@@ -82,24 +113,26 @@ def main():
             hit = None
             for sp in spaces:
                 if point_in_poly(cx, cy, sp["points"]) or \
-                   clip_poly_area_over_box(sp["points"], nx, ny, nw, nh) >= args.min_overlap:
+                   overlap_frac(sp["points"], nx, ny, nw, nh) >= args.min_overlap:
                     hit = sp["space"]
                     break
             a["attributes"] = {"InEcoParkingSpot": bool(hit)}
             if hit:
                 a["attributes"]["spot"] = hit
                 n_inspot += 1
-            changed = True
-        if changed and not args.dry_run:
+        if not args.dry_run:
             jf.write_text(json.dumps(coco, indent=2))
         n_files += 1
         if n_files % 500 == 0:
             print(f"  …{n_files} sensor files")
 
     print(f"{n_files} sensor files · {n_boxes:,} boxes · "
-          f"{n_inspot:,} in-spot ({100*n_inspot//max(1,n_boxes)}%) · "
-          f"{n_nomatch:,} boxes on sensors without polygon data"
-          f"{' [DRY RUN — nothing written]' if args.dry_run else ''}")
+          f"{n_inspot:,} in-spot ({100*n_inspot//max(1,n_boxes)}%)")
+    print(f"calibration match: exact {match_counts['exact']:,} · "
+          f"nearest-in-time {match_counts['timeline']:,} · "
+          f"latest-fallback {match_counts['latest']:,} · "
+          f"no-polygons {match_counts['none']:,}"
+          f"{'  [DRY RUN — nothing written]' if args.dry_run else ''}")
 
 
 if __name__ == "__main__":
