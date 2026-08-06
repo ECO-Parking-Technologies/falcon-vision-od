@@ -179,7 +179,7 @@ def main():
     ap.add_argument("--skip-int8", action="store_true")
     args = ap.parse_args()
 
-    cfg = yaml.safe_load(Path("config/train_wrapper_config.yaml").read_text())
+    cfg = yaml.safe_load(Path("config/train_sam3_full.yaml").read_text())
     model_name = args.model or cfg["model"]
     num_classes = args.num_classes or cfg.get("num_classes", len(load_label_map()))
     H, W = MODEL_CONFIG[model_name]["image_size"]

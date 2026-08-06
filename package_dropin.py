@@ -596,7 +596,7 @@ def main():
                     help="skip building; validate the existing packaged files")
     args = ap.parse_args()
 
-    cfg = yaml.safe_load(Path("config/train_wrapper_config.yaml").read_text())
+    cfg = yaml.safe_load(Path("config/train_sam3_full.yaml").read_text())
     model_name = args.model or cfg["model"]
     global IMAGE_SIZE
     IMAGE_SIZE = args.input_size
