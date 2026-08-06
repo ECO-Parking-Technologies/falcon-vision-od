@@ -101,11 +101,15 @@ annotating volume. Deep docs: [docs/training-and-experiments.md](docs/training-a
   creds prompted; `--cf-access` = Cloudflare Access service-token headers
   (Zero Trust stays up); `--host-header` = reach the LAN IP under a canonical
   host rule. Admin must be superuser to see others in Assignee dropdown.
-- **Human strategy (revised 2026-07-31)**: ~3–5k audited frames, role =
-  (1) gold eval yardstick, (2) blind-spot hunting on condition slices
-  (night/snow/glare tags), (3) surgical annotation of found weaknesses. NO
-  volume box-drawing. Exports → `data/cvat_exports/<garage>.json` **override
-  drafts per-frame automatically** in every training build.
+- **Human strategy: ON HOLD (user 2026-08-06)** — no manual annotation
+  running; gold auditing (~3–5k frames: eval yardstick + condition-slice
+  blind-spot hunting, NO volume drawing) is a just-in-time task before any
+  fleet-wide push. Exports → `data/cvat_exports/<garage>.json` **override
+  drafts per-frame automatically** whenever they exist. CVAT currently holds
+  39 tasks with attribute-prefilled SAM3 drafts (spot names + checkboxes);
+  vehicle labels carry a `spot` TEXT attribute (spec generator in
+  convert_to_cvat.py; ensure_labels also syncs missing ATTRIBUTES onto
+  existing project labels).
 - Annotation policy: identifiability rule (unlabeled visible vehicle =
   negative supervision — box everything identifiable, skip <12 px/smudges);
   InEcoParkingSpot/InMotion/Occluded attributes; condition tags.
@@ -131,8 +135,16 @@ annotating volume. Deep docs: [docs/training-and-experiments.md](docs/training-a
   or variant dicts with overrides — `{name: lite0-25k, model: lite0,
   max_train_images: 25000}`) trains everything into ONE session dir
   (`<output>/<datetime>/<level>/{train,export}` + session-shared `split/`
-  reused across levels; data-modified entries get local splits).
-  run_sweep.py is retired — its jobs are config entries now.
+  reused across levels via a params.json guard; data-modified entries get
+  local splits). run_sweep.py is retired — its jobs are config entries now.
+- **Output root is `runs/`** (renamed from experiments/falcon-vision-effdet
+  2026-08-06): `runs/<session-dt>/<level>/{train,export}` + per-session
+  report.html; `runs/latest-<level>` symlinks to the newest export; global
+  `runs/report.html` + `runs/ladder.html`. History migrated: the full ladder
+  lives merged in `runs/20260803-182412/` (lite0…d2, one shared-format split
+  per level). Artifact filenames prefix `<session>-<level>.…`. All tools
+  (run_metrics, eval_inspot, build_report --session, find_ckpt globs)
+  resolve both this layout and migrated dirs.
 - **Augmentation today**: ONLY hflip + RandomResizePad scale-jitter 0.1–2×
   (aspect-preserving ≈ letterbox, conveniently matching FW preprocessing) +
   random interpolation. `--color-jitter` exists but is COMMENTED OUT in
@@ -158,6 +170,14 @@ annotating volume. Deep docs: [docs/training-and-experiments.md](docs/training-a
   a student rarely exceeds its teacher; systematic teacher errors are
   invisible to self-eval (why gold audits + condition slices exist).
 - Person gate: prod baseline 3.8% person AP — fleet-wide promotion bar.
+- **THE product metric: in-spot car AP** (`eval_inspot.py <run-dir>`) —
+  portal spot polygons (pulled PER SNAPSHOT RUN, calibration-drift-aware;
+  frames matched to their own run's calibration via run8 in filenames) →
+  `label_inspot.py` stamps InEcoParkingSpot/spot attributes on all 724k
+  draft boxes (31% in-spot) → eval scores ONLY in-spot GT (rest = iscrowd
+  ignore regions). Round-2 gate: changes commit only on a measured win here.
+- Sensor-geometry insight: down-lane sensors' in-spot cars ≈ large band,
+  across-lane ≈ medium band (the weaker one; capacity helps it most).
 - Eval tools: `validate.py` (PyTorch), `eval_tflite_coco.py <root> <out>
   <model> [ours]` (any TFLite; `ours` = our 0-based class indices vs COCO-90
   baseline), `run_metrics.py`, `.ts.pt` via `torch.jit.load` (full NMS,
@@ -187,6 +207,22 @@ annotating volume. Deep docs: [docs/training-and-experiments.md](docs/training-a
 - Quantization accuracy cost (lite0): int8 −1.7 pts vs f32 with 256-frame
   calibration (was −3.6 with 64 frames — calibration diversity matters).
   TFQ (TF-converter PTQ) beat AEQ static by +1.3 car AP on lite2.
+- **In-spot car AP baselines (strict/AP50 %, 8,441 in-spot val boxes)**:
+  lite0 63.8/84.6 · lite1 69.1/88.7 · lite2 72.5/91.1 · d1 74.9/92.2 —
+  in-spot accuracy is NOT saturated up the ladder (unlike all-boxes).
+- **Why the ~62.5% all-boxes ceiling isn't what it looks like**: AP-large is
+  87-91% (≈90% teacher fidelity on the operational band); the "missing"
+  accuracy is (a) sub-resolvable tiny boxes SAM3 labels at 1008px that
+  students can't see at 320-640, (b) strict-IoU box-jitter vs the teacher's
+  own boxes. Also d1≈d2 because store frames are 640×480 — inputs beyond
+  ~640 are upscaling air (changes with FVS2 4K), and d2's person collapse
+  (2.2%) = bs4/2-epoch schedule artifact.
+- Surface-lot probe (roof-camera image through everything,
+  `data/probes/2026-08-05-surface-lot/`): garage students partially
+  transfer (side-profile viewpoint gap; mid-tiers hallucinate a pavement
+  mega-box; d1 conservative OOD — safest failure profile); prod baseline
+  clean-but-partial; **SAM3 9/9 perfect incl. a distant pedestrian** — the
+  pole/lot domain fine-tune path is pre-validated.
 
 ## 9. Export & conversion — the deep lessons
 
@@ -298,22 +334,42 @@ OD confirms parked cars — seconds don't matter, points do).
   pre-collection possible or needed; current corpus transfers as
   pretraining. 4K value = distant spots become in-scope (ROI/tiling,
   d-series territory); transposes/layout hurt NPU compilers even more.
-- **Jetson surface-lot product** (pole-mounted, ≤5 s budget): d2/d3-class +
-  tiled 4K + temporal voting; TensorRT path; fine-tuned beats off-the-shelf;
-  if YOLO considered, mind AGPL (Ultralytics) — YOLOX/RT-DETR are Apache.
-  SAM 3 can't run on-edge (~30-60 s/frame on Xavier NX) but works as a
-  server-side escalation oracle + annotation factory for pole footage.
+- **The surface-lot domain is LIVE TODAY**: Eco "Roof Zonal" zone counters
+  run on Jetson Xavier NX (ZED 2i stereo, JetPack r35, GPU 90%/mem 87%
+  utilized — no room for SAM3 on-device). The 2026-08-05 probe image came
+  from one. Opportunity: use Zonal units as FRAME SOURCES into the store →
+  SAM3 drafts (proven 9/9 on that domain) → d-series fine-tune, long before
+  FVS2. Jetson buys: Xavier is EOL/JetPack-frozen (torch ≤2.1 — SAM3 needs
+  modern torch); **Orin NX 16GB is the pick** (pin-compatible with Xavier NX
+  carriers, current JetPack, ~3-5×; Orin Nano Super $249 for prototyping).
+  SAM3 at 0.2 Hz: comfortable on Orin, stack-archaeology on Xavier; a
+  distilled d2 beats on-edge SAM3 whenever the vocabulary is fixed.
+- Jetson lot product recipe: d2/d3-class + tiled 4K + temporal voting;
+  TensorRT path; if YOLO considered, mind AGPL (Ultralytics) — YOLOX/RT-DETR
+  are Apache. SAM3 = server-side oracle + annotation factory, not edge.
 
 ## 14. Roadmap / open threads
 
-1. lite4/d1 (and incoming d2) clean-int8 packaging failure — diagnose (SiLU?)
-2. d2 eval → complete the ladder + ladder.html data array
-3. Plain-sum lite2 retrain (the ≤4 s challenger experiment)
-4. Round 1: photometric augmentation + person-AP fix; gold re-score of all
-   checkpoints when gaprisco's exports accumulate
-5. Spot-occupancy evaluator vs portal validations (the business metric — not
-   built; high value, parked since planning track 06)
+**Round-2 protocol (user): improve the deployment target, one lever at a
+time, judged by eval_inspot.py; commit recipe changes ONLY on measured wins.
+Annotation is ON HOLD (CVAT recreated with attribute-prefilled drafts; gold
+auditing = just-in-time before any fleet-wide push).**
+
+1. **lite1-r2 experiment** (`config/train_lite1_r2.yaml`, EMA + 3× step
+   budget) — ready/running; gate = in-spot 69.1/88.7. If it wins, EMA +
+   longer schedule graduate into the master config.
+2. Next round-2 levers (specced, in order): spot-weighted loss (polygons +
+   teacher confidence weighting), ROI-crop training (kills the across-lane
+   medium-box gap by construction, matches FW preprocessing), per-geometry
+   input size (lite1@448 build = zero-training probe), mask-tightened boxes.
+3. Plain-sum lite2 retrain (the ≤4 s challenger; weight_method='sum'
+   plumbing still to write)
+4. Round 1: photometric augmentation (night/glare/WB) + person-AP fix
+5. Spot-occupancy evaluator vs portal validations (the business metric —
+   half-built now that spot polygons + in-spot eval exist)
 6. Greg-side: XNNPACK FW rebuild test with clean f32; f32-vs-int8 power check
-7. Parked ideas: masks in drafts (`--with-masks`), consensus GDINO+SAM3
-   filtering, MNv3-backbone experiment, SAM3 fine-tuning (needs the github
-   repo path, not HF), gateway annotation oracle
+7. `lite1-coco` person-gate arm (one uncomment in the master config)
+8. Parked: masks in drafts (`--with-masks`), consensus GDINO+SAM3 filtering,
+   MNv3-backbone experiment, SAM3 fine-tuning (github repo, not HF),
+   gateway annotation oracle, SAM3 offline packaging (container/snap —
+   feasible, license rides along on distribution)
