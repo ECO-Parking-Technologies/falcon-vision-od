@@ -1,26 +1,44 @@
 #!/usr/bin/env bash
 # Backs up everything irreplaceable that git DOESN'T track (~13 GB):
-#   - data/images        frames + SAM3 drafts + in-spot attributes
-#   - runs/              checkpoints, exports (deployed shas!), metrics, splits
-#   - data/manifest.sqlite, spot_polygons.json, sam3_sandbox, probes, queue
-# Deliberately EXCLUDED (regenerable): venvs, weights/, draft_previews.
+#   data/images (frames+drafts+attributes), runs/ (checkpoints, exports,
+#   metrics), manifest.sqlite, spot_polygons.json, evidence dirs.
+# Regenerable heavies (venvs, weights/, draft_previews) excluded.
 #
-#   ./backup_valuables.sh /path/to/backup/destination
-#
-# Incremental (rsync); safe to run repeatedly, e.g. after each training
-# session or store pull. Never uses --delete: the backup only grows.
+# Manual:    ./backup_valuables.sh /mnt/nas/falcon-backup
+#            (optional offsite: read -s AZURE_SAS_URL && export AZURE_SAS_URL)
+# Service:   ./backup_valuables.sh --from-config
+#            (config written by setup_backup_service.sh; runs unattended
+#             with retries; per-machine subdir <hostname>-<machine-id8>)
 set -euo pipefail
-DEST="${1:?usage: backup_valuables.sh <destination-dir>}"
 REPO="$(cd "$(dirname "$0")" && pwd)"
+CONF_DIR="$HOME/.config/falcon-vision-backup"
+TAG="$(hostname)-$(cut -c1-8 /etc/machine-id 2>/dev/null || echo unknown)"
+
+if [ "${1:-}" = "--from-config" ]; then
+  # shellcheck source=/dev/null
+  source "$CONF_DIR/config"           # sets NAS_DEST (and optionally uses sas file)
+  DEST="$NAS_DEST/$TAG"
+  [ -f "$CONF_DIR/sas.url" ] && AZURE_SAS_URL="$(cat "$CONF_DIR/sas.url")"
+else
+  DEST="${1:?usage: backup_valuables.sh <dest> | --from-config}/$TAG"
+fi
 mkdir -p "$DEST"
 
-# trailing slashes + --copy-links: runs/ and weights/ are symlinks to the
-# Expansion drive — copy contents, not the links
-rsync -a --info=progress2 --copy-links \
-  "$REPO/runs/" \
-  "$DEST/runs/"
+retry() {  # retry <label> <cmd...> — 3 attempts, 30s/120s backoff
+  local label="$1"; shift
+  local n=0
+  until "$@"; do
+    n=$((n + 1))
+    if [ "$n" -ge 3 ]; then echo "[$label] FAILED after 3 attempts"; return 1; fi
+    local wait=$((n == 1 ? 30 : 120))
+    echo "[$label] attempt $n failed — retrying in ${wait}s"
+    sleep "$wait"
+  done
+}
 
-rsync -a --info=progress2 --copy-links \
+echo "== backup -> $DEST"
+retry "runs" rsync -a --info=progress2 --copy-links "$REPO/runs/" "$DEST/runs/"
+retry "data" rsync -a --info=progress2 --copy-links \
   "$REPO/data/images" \
   "$REPO/data/manifest.sqlite" \
   "$REPO/data/spot_polygons.json" \
@@ -28,21 +46,17 @@ rsync -a --info=progress2 --copy-links \
   "$REPO/data/probes" \
   "$REPO/data/annotation_queue_phase1.json" \
   "$DEST/data/"
+echo "local backup complete ($(du -sh "$DEST" | cut -f1))"
 
-echo "backup complete -> $DEST ($(du -sh "$DEST" | cut -f1))"
-
-# Optional offsite leg: Azure Blob via rclone, credential in RAM only.
-# One-time Azure setup: storage account + private container, generate a
-# CONTAINER-scoped SAS (racwl, long expiry). Then per run:
-#     read -s AZURE_SAS_URL && export AZURE_SAS_URL
-#     ./backup_valuables.sh <dest>
-# The SAS URL never touches disk (on-the-fly rclone remote, no config file).
 if [ -n "${AZURE_SAS_URL:-}" ]; then
-  command -v rclone >/dev/null || { echo "rclone not installed (sudo apt install rclone) — skipping cloud leg"; exit 0; }
-  echo "syncing to Azure Blob…"
-  rclone sync "$DEST" ":azureblob,sas_url=${AZURE_SAS_URL}:" \
-    --azureblob-access-tier Cool --info=progress2
+  if ! command -v rclone >/dev/null; then
+    echo "rclone not installed (sudo apt install rclone) — cloud leg skipped"
+    exit 0
+  fi
+  echo "== syncing to Azure Blob ($TAG)…"
+  retry "azure" rclone sync "$DEST" ":azureblob,sas_url=${AZURE_SAS_URL}:/$TAG" \
+    --azureblob-access-tier Cool --stats-one-line
   echo "cloud sync complete"
 else
-  echo "(no AZURE_SAS_URL set — cloud leg skipped)"
+  echo "(no Azure SAS — cloud leg skipped)"
 fi

@@ -42,7 +42,14 @@ Portal snapshot pull (all garages) → SAM 3 preannotation (drafts EVERY frame)
 bash setup_venv.sh              # main venv (training/eval/preannotation) — recreates each run
 bash setup_export_venv.sh       # export venv (TFLite toolchain)
 bash setup_convert_venvs.sh     # clean-converter venvs (onnx2tf + TF 2.8, on the data disk)
+./setup_backup_service.sh       # OPTIONAL: nightly unattended backup (systemd user timer)
 ```
+
+The backup service rsyncs all irreplaceable untracked data (runs/, images,
+manifests) to a NAS — and optionally Azure Blob — nightly with retries, under a
+per-machine subdir (`<hostname>-<machine-id8>`). One-off manual backups:
+`./backup_valuables.sh <dest>`. Restoring onto a fresh machine:
+[docs/disaster-recovery.md](docs/disaster-recovery.md).
 
 ### 2. Data (portal pulls — credentials prompted, RAM only)
 
