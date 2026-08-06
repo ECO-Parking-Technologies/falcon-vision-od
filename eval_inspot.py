@@ -34,31 +34,44 @@ def store_index(store, garage):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("run_dir", type=Path)
+    ap.add_argument("run_dir", type=Path, nargs="?",
+                    help="run dir (or give --split + --predictions instead, "
+                         "e.g. to score another model's checkpoint on this "
+                         "run's split)")
+    ap.add_argument("--split", type=Path, help="split dir override")
+    ap.add_argument("--predictions", type=Path,
+                    help="COCO predictions json override")
     ap.add_argument("--store", type=Path, default=Path("data/images"))
     args = ap.parse_args()
+    if args.run_dir is None and not (args.split and args.predictions):
+        ap.error("need a run_dir, or both --split and --predictions")
 
     from pycocotools.coco import COCO
     from pycocotools.cocoeval import COCOeval
 
     # accept a <session>/<level> dir or its train/ subdir; find manifest,
     # predictions, and the split (session layout first, legacy fallback)
-    rd = args.run_dir
-    train_dir = rd / "train" if (rd / "train").exists() else rd
-    man = {}
-    for mf in (train_dir / "run.json", train_dir.parent / "run.json"):
-        if mf.exists():
-            man = json.loads(mf.read_text())
-            break
-    split = None
-    for cand in (train_dir.parent / "split", train_dir.parent.parent / "split",
-                 Path(man.get("split_dir", "/nonexistent"))):
-        if (cand / "annotations" / "instances_val2017.json").exists():
-            split = cand
-            break
-    if split is None:
-        raise SystemExit(f"no split found for {rd}")
-    args.run_dir = train_dir  # val_predictions.json lives beside the checkpoints
+    split = args.split
+    if args.run_dir is not None:
+        rd = args.run_dir
+        train_dir = rd / "train" if (rd / "train").exists() else rd
+        man = {}
+        for mf in (train_dir / "run.json", train_dir.parent / "run.json"):
+            if mf.exists():
+                man = json.loads(mf.read_text())
+                break
+        if split is None:
+            for cand in (train_dir.parent / "split",
+                         train_dir.parent.parent / "split",
+                         Path(man.get("split_dir", "/nonexistent"))):
+                if (cand / "annotations" / "instances_val2017.json").exists():
+                    split = cand
+                    break
+    if split is None or not (split / "annotations" /
+                             "instances_val2017.json").exists():
+        raise SystemExit(f"no split found for {args.run_dir or args.split}")
+    preds = args.predictions or (train_dir / "val_predictions.json")
+    name = args.predictions.stem if args.predictions else train_dir.name
     val = json.loads((split / "annotations" /
                       "instances_val2017.json").read_text())
     imgs = {i["id"]: i["file_name"] for i in val["images"]}
@@ -86,7 +99,7 @@ def main():
         json.dump(val, f)
         tmp = f.name
     gt = COCO(tmp)
-    dt = gt.loadRes(str(args.run_dir / "val_predictions.json"))
+    dt = gt.loadRes(str(preds))
     E = COCOeval(gt, dt, "bbox")
     E.evaluate()
     E.accumulate()
@@ -97,7 +110,7 @@ def main():
         x = x[x > -1]
         return float(x.mean()) if x.size else float("nan")
     Path(tmp).unlink()
-    print(f"{args.run_dir.name}: in-spot car AP {apv()*100:.1f}% | "
+    print(f"{name}: in-spot car AP {apv()*100:.1f}% | "
           f"AP50 {apv(0)*100:.1f}% ({kept:,} in-spot GT, {ign:,} ignored, "
           f"{miss} unmatched)")
 
