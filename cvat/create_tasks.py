@@ -34,32 +34,54 @@ console = Console()
 
 
 def ensure_labels(client, project):
-    """Create the project's labels from config/cvat_labels.json if missing."""
+    """Sync the project's labels with config/cvat_labels.json: create missing
+    labels AND add missing attributes to existing ones (e.g. the `spot` text
+    attribute added 2026-08-06)."""
     import json
-    have = {l.name for l in project.get_labels()}
-    spec = json.loads(Path("config/cvat_labels.json").read_text())
-    missing = [l for l in spec if l["name"] not in have]
-    if not missing:
-        return
-    for l in missing:
-        l.pop("id", None)  # CVAT assigns its own ids
-    console.print(f"project is missing {len(missing)} labels — creating them…")
     from cvat_sdk.api_client import models
-    label_models = []
-    for l in missing:
-        attrs = [models.AttributeRequest(
-                     name=a["name"], mutable=a["mutable"],
-                     input_type=models.InputTypeEnum(a["input_type"]),
-                     default_value=a["default_value"], values=a["values"])
-                 for a in l.get("attributes", [])]
-        label_models.append(models.PatchedLabelRequest(
+
+    def attr_req(a):
+        return models.AttributeRequest(
+            name=a["name"], mutable=a["mutable"],
+            input_type=models.InputTypeEnum(a["input_type"]),
+            default_value=a["default_value"], values=a["values"])
+
+    existing = {l.name: l for l in project.get_labels()}
+    spec = json.loads(Path("config/cvat_labels.json").read_text())
+
+    missing = [l for l in spec if l["name"] not in existing]
+    if missing:
+        console.print(f"project is missing {len(missing)} labels — creating them…")
+        label_models = [models.PatchedLabelRequest(
             name=l["name"], color=l.get("color"),
-            type=l.get("type", "rectangle"), attributes=attrs))
-    client.api_client.projects_api.partial_update(
-        project.id,
-        patched_project_write_request=models.PatchedProjectWriteRequest(
-            labels=label_models))
-    console.print(f"[green]created {len(label_models)} labels[/green]")
+            type=l.get("type", "rectangle"),
+            attributes=[attr_req(a) for a in l.get("attributes", [])])
+            for l in missing]
+        client.api_client.projects_api.partial_update(
+            project.id,
+            patched_project_write_request=models.PatchedProjectWriteRequest(
+                labels=label_models))
+        console.print(f"[green]created {len(label_models)} labels[/green]")
+
+    # attribute sync on labels that already exist
+    for l in spec:
+        lbl = existing.get(l["name"])
+        if lbl is None:
+            continue
+        have = {a.name for a in (lbl.attributes or [])}
+        new_attrs = [a for a in l.get("attributes", []) if a["name"] not in have]
+        if not new_attrs:
+            continue
+        keep = [models.AttributeRequest(
+                    id=a.id, name=a.name, mutable=a.mutable,
+                    input_type=a.input_type, default_value=a.default_value,
+                    values=a.values)
+                for a in (lbl.attributes or [])]
+        client.api_client.labels_api.partial_update(
+            lbl.id, patched_label_request=models.PatchedLabelRequest(
+                attributes=keep + [attr_req(a) for a in new_attrs]))
+        console.print(f"[green]{l['name']}[/green]: added attributes "
+                      f"{[a['name'] for a in new_attrs]}")
 
 
 def main():
