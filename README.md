@@ -34,88 +34,96 @@ Portal snapshot pull (all garages) → SAM 3 preannotation (drafts EVERY frame)
 
 ---
 
-## Installation
+## From scratch — the full path
+
+### 1. Environments
 
 ```bash
-bash setup_venv.sh                        # creates falcon-vision-od-venv from requirements.txt
-source falcon-vision-od-venv/bin/activate # activate before running anything
+bash setup_venv.sh              # main venv (training/eval/preannotation) — recreates each run
+bash setup_export_venv.sh       # export venv (TFLite toolchain)
+bash setup_convert_venvs.sh     # clean-converter venvs (onnx2tf + TF 2.8, on the data disk)
 ```
 
-Note: `setup_venv.sh` deletes and recreates the venv each run.
-
----
-
-## Training Images (preliminary step)
-
-Pull diverse snapshot images from every garage via the ECO Parking portal
-(garages auto-discovered; credentials prompted, kept in RAM only; already-pulled
-images are never downloaded twice):
+### 2. Data (portal pulls — credentials prompted, RAM only)
 
 ```bash
-python3 portal/pull_training_images.py --source b
+python3 portal/pull_training_images.py --source b   # garage frames -> data/images/<garage>/<sensor>/…
+python3 portal/pull_spot_polygons.py                # per-run spot calibrations -> data/spot_polygons.json
 ```
 
-Images land in `data/images/<garage>/<sensor>/…` with a manifest. See
-[portal/README.md](portal/README.md) for options.
+### 3. Preannotation (SAM 3 — the teacher)
 
-## Preannotation
-
-Sample a diverse annotation queue from the store, then generate first-draft
-boxes with Grounding DINO (garages auto-discovered):
+One-time: accept the gated-weights license (see [preannotation/README.md](preannotation/README.md)).
 
 ```bash
-python3 preannotation/sample_queue.py --target 5000
+cd preannotation && PYTHONPATH=.. python3 run_preannotation.py --config config.yaml --all-frames --skip-existing
+cd .. && python3 preannotation/label_inspot.py      # stamp InEcoParkingSpot/spot attributes
+python3 preannotation/render_drafts.py              # visual QA -> data/draft_previews/ (local only)
 ```
 
+Resumable and incremental — rerun after any new portal pull; only new frames are drafted.
 
-Runs a model over garage images and writes COCO 1.0 annotation files per sensor for CVAT import:
+### 4. CVAT (optional — audits are on-demand, not required for training)
+
+Self-hosted setup: [cvat/README.md](cvat/README.md). Then:
 
 ```bash
-python3 preannotation/run_preannotation.py --config preannotation/config.yaml --visualize 3
+PYTHONPATH=preannotation python3 preannotation/export_cvat_tasks.py    # per-garage bundles
+python3 cvat/create_tasks.py --host http://<host>:8085 --project "Falcon Vision v2"
+# cvat/purge_tasks.py wipes tasks (keeps project/labels/users) before a re-import
 ```
 
-- Configured by [preannotation/config.yaml](preannotation/config.yaml): model, garages, confidence `threshold`, `allowed_labels`.
-- Uses either downloaded COCO-pretrained weights (`use_pretrained_model: True`) or a trained TorchScript model from this repo (`model_file`).
-- Outputs `preannotations.coco.json` per sensor plus `cvat_labels.json` for CVAT label setup.
+Labels + attributes sync automatically from [config/cvat_labels.json](config/cvat_labels.json).
+Audited exports saved to `data/cvat_exports/` override the drafts in every training build.
 
-## Annotation (CVAT)
-
-CVAT is the source of truth for annotations, including train/val/test splits. See [cvat/README.md](cvat/README.md) for self-hosted setup (v2.23.1), task structure (one task per garage+sensor), importing preannotations, and exporting COCO for training.
-
-## Training
+### 5. Training
 
 ```bash
-python3 run_training_from_config.py --config config/train_wrapper_config.yaml
+python3 run_training_from_config.py --config config/train_sam3_full.yaml   # one full-store run
+python3 run_sweep.py --config config/train_sam3_full.yaml                  # data-size sweep
+python3 run_sweep.py --config ... --models tf_efficientdet_lite1,tf_efficientdet_d1   # capacity ladder
 ```
 
-Configured by [config/train_wrapper_config.yaml](config/train_wrapper_config.yaml). This:
+Every run auto-produces: per-class metrics (`coco_metrics.json`, `run.json`),
+TensorBoard logs, a refreshed dashboard (`experiments/falcon-vision-effdet/report.html`),
+and packaged sensor artifacts. Read **per-class car/person AP, never the 6-class mean**.
 
-1. Merges CVAT-exported garage annotations, splits train/val, and symlinks images into a timestamped `split_*` dir under `output_dir`.
-2. Downloads MS-COCO 2017 (~20 GB, once), filters it to our classes, and merges it into the split.
-3. Invokes the upstream `train.py` in-process with the configured model, batch size, epochs, etc.
-
-Outputs land in `experiments/falcon-vision-effdet/train/<timestamp>-<model>/` (checkpoints, `summary.csv` with per-epoch loss/mAP).
-
-## Export
+### 6. Evaluation
 
 ```bash
-python3 generate_model_files.py            # newest best checkpoint → TorchScript .pt (for preannotation)
-
-bash setup_export_venv.sh                  # once: separate venv for the TFLite toolchain
-PYTHONPATH=. falcon-vision-od-export-venv/bin/python export_tflite.py
+python3 run_metrics.py <train-run-dir>       # per-class + size-banded AP
+python3 eval_inspot.py <train-run-dir>       # THE product metric: in-spot car AP
+falcon-vision-od-export-venv/bin/python eval_tflite_coco.py <root> out.json <model.tflite> ours
 ```
 
-[export_tflite.py](export_tflite.py) exports a checkpoint to float32 and **full-int8 TFLite** (litert-torch conversion + ai-edge-quantizer static PTQ calibrated on real garage images), with built-in PyTorch↔TFLite parity checks. Input is NHWC like the firmware baseline; outputs are pre-NMS boxes/scores (post-process contract tracked in [docs/planning/03-tflite-export.md](docs/planning/03-tflite-export.md)).
+Dashboards: `report.html` (all runs), `ladder.html` (architecture comparison).
 
-Both exporters accept `--model` / `--checkpoint` and write versioned artifacts (see [artifact_paths.py](artifact_paths.py)):
+### 7. Export & packaging
+
+Automatic after training; manual for any checkpoint (export venv):
+
+```bash
+PYTHONPATH=. falcon-vision-od-export-venv/bin/python package_dropin.py \
+    --checkpoint <ckpt> --model <effdet-name> --input-size <native>
+```
+
+Artifacts per run — size and quantization always explicit:
 
 ```
-<output_dir>/artifacts/<model>/<train-run>/
-    model.ts.pt  model.f32.tflite  model.int8.tflite  manifest.json
-<output_dir>/artifacts/<model>/latest -> <train-run>/   # stable path for configs
+<run>.dropin-<size>-{f32,dyn,int8}.tflite   # sensor-ready, validated vs the baseline
+<run>.raw-{f32,dyn,int8}.tflite             # dev/eval only
+<run>.ts.pt · manifest.json                 # TorchScript + provenance
 ```
 
-`manifest.json` records checkpoint provenance, input/output contract, quantization recipe, parity metrics, and git commit per artifact. Off-the-shelf COCO checkpoints downloaded for evaluation live in `weights/` (gitignored).
+Conversion is the clean path (torch → ONNX → onnx2tf; [clean_convert.py](clean_convert.py)).
+Native sizes: lite0=320 · lite1=384 · lite2=448 · lite3=512 · lite4/d1=640 · d2=768 —
+**never ship a non-native size** (2× latency).
+
+### 8. Deploy
+
+Upload the dropin via the sensor's `/plugin/od-model/staging/upload` → `install`;
+verify sha256 + Tensor Size on the Fusion Analysis page. Contract details:
+[docs/sensor-architecture.md](docs/sensor-architecture.md).
 
 ---
 
@@ -127,7 +135,7 @@ Both exporters accept `--model` / `--checkpoint` and write versioned artifacts (
 
 ## Planned
 
-- int8 TFLite export path (ai-edge-torch) matching the firmware's model contract.
-- Eco Parking portal integration to pull training images from all garages.
-- Spot-occupancy evaluation (detections + spot definitions → per-spot accuracy vs. the current firmware model).
+- Spot-occupancy evaluator (detections + spot polygons + portal validations → per-spot accuracy vs the firmware model).
+- Round-2 accuracy experiments on lite2 (spot-weighted loss, ROI-crop training, EMA/schedule) gated on `eval_inspot.py`.
+- Photometric augmentation (night/glare/white-balance) — round 1.
 - Anchor box tuning from garage box-size distributions.
