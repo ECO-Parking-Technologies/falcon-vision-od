@@ -215,6 +215,10 @@ def data_params(config):
         "include_coco": config.get("include_coco", True),
         "coco_max_frac": config.get("coco_max_frac"),
         "audited_exports_dir": config.get("audited_exports_dir", "data/cvat_exports"),
+        # FW-geometry cropping: the crop depends on the tensor size, so the
+        # split content is input-size-specific and must be fingerprinted
+        "roi_crop": bool(config.get("roi_crop", False)),
+        "roi_tensor": config.get("roi_tensor"),
     }
 
 
@@ -256,6 +260,18 @@ def merge_and_split_datasets(config, split_dir=None):
     audited = load_audited_overrides(config)
     n_overridden = 0
 
+    # roi_crop: replace symlinks with FW-geometry crops (per-camera spot-region
+    # crop, exactly what the sensor feeds the OD model) — train AND val
+    cropper = None
+    if config.get("roi_crop"):
+        from PIL import Image
+        from roi_crop import RoiCropper, crop_annotation
+        t = int(config["roi_tensor"])  # required: crops are tensor-size-specific
+        cropper = RoiCropper(config.get("spot_polygons",
+                                        "data/spot_polygons.json"), t, t)
+        print(f"[INFO] roi_crop on: FW-geometry crops at tensor {t}x{t}")
+    n_no_poly = n_ann_dropped = n_cropped = 0
+
     if split_by == "sensor-hash":
         # frozen split: membership depends only on (salt, garage/sensor), so
         # the val set never changes as the store grows; ordering by hash gives
@@ -276,6 +292,7 @@ def merge_and_split_datasets(config, split_dir=None):
         parts = rel_path.parts
         # legacy: <garage>/training_images/<sensor>/...; store: <garage>/<sensor>/...
         garage = parts[0]
+        sensor = parts[-2]
         g_over = audited.get(garage, {})
 
         if split_by == "sensor-hash":
@@ -314,8 +331,10 @@ def merge_and_split_datasets(config, split_dir=None):
             nonlocal next_img_id, next_ann_id, n_overridden
             # local map: annotations for THIS side's images only (the old
             # shared map leaked every file's train annotations into val.json)
+            nonlocal n_no_poly, n_ann_dropped, n_cropped
             img_id_map = {}
             overridden = {}  # orig image id -> audited [(orig_cat, bbox), ...]
+            crop_map = {}    # orig image id -> (x0, y0, x1, y1) when roi_crop
             for img in img_list:
                 orig_id = img["id"]
                 fname = os.path.basename(img["file_name"])
@@ -323,15 +342,30 @@ def merge_and_split_datasets(config, split_dir=None):
                 src = base_path / img["file_name"]
                 dst = img_dir / new_name
                 dst.parent.mkdir(parents=True, exist_ok=True)
-                if not dst.exists():
+                W, H = img.get("width", 640), img.get("height", 480)
+                if cropper is not None:
+                    crop = cropper.crop_for(garage, sensor, img["file_name"], W, H)
+                    if crop is None:
+                        # no calibration = the FW would never run OD here; the
+                        # deployed input distribution has no such frames
+                        n_no_poly += 1
+                        continue
+                    if not dst.exists():
+                        Image.open(src).crop(crop).save(dst, quality=92)
+                    crop_map[orig_id] = crop
+                    W, H = crop[2] - crop[0], crop[3] - crop[1]
+                    n_cropped += 1
+                    if n_cropped % 5000 == 0:
+                        print(f"  …{n_cropped:,} frames cropped")
+                elif not dst.exists():
                     os.symlink(src, dst)
 
                 target_json["images"].append(
                     {
                         "id": next_img_id,
                         "file_name": new_name,
-                        "width": img.get("width", 640),
-                        "height": img.get("height", 480),
+                        "width": W,
+                        "height": H,
                     }
                 )
                 img_id_map[orig_id] = next_img_id
@@ -341,26 +375,39 @@ def merge_and_split_datasets(config, split_dir=None):
 
             for ann in annotations:
                 if ann["image_id"] in img_id_map and ann["image_id"] not in overridden:
-                    # compute area from bbox
-                    x, y, w, h = ann["bbox"]
+                    bbox = ann["bbox"]
+                    if cropper is not None:
+                        bbox = crop_annotation(bbox, crop_map[ann["image_id"]])
+                        if bbox is None:  # sliver at the crop edge
+                            n_ann_dropped += 1
+                            continue
+                    x, y, w, h = bbox
                     area = w * h
 
-                    target_json["annotations"].append(
-                        {
-                            "id": next_ann_id,
-                            "image_id": img_id_map[ann["image_id"]],
-                            "category_id": ann["category_id"],
-                            "bbox": ann["bbox"],
-                            "area": area,
-                            "iscrowd": ann.get("iscrowd", 0),
-                        }
-                    )
+                    new_ann = {
+                        "id": next_ann_id,
+                        "image_id": img_id_map[ann["image_id"]],
+                        "category_id": ann["category_id"],
+                        "bbox": bbox,
+                        "area": area,
+                        "iscrowd": ann.get("iscrowd", 0),
+                    }
+                    if cropper is not None and "attributes" in ann:
+                        # eval_inspot reads these inline: crop-shifted boxes
+                        # can't be matched back to the store drafts by bbox
+                        new_ann["attributes"] = ann["attributes"]
+                    target_json["annotations"].append(new_ann)
                     next_ann_id += 1
 
             # human-audited frames: drafts dropped above, audited boxes in
             for orig_id, audited_anns in overridden.items():
                 n_overridden += 1
                 for cat_id, bbox in audited_anns:
+                    if cropper is not None:
+                        bbox = crop_annotation(bbox, crop_map[orig_id])
+                        if bbox is None:
+                            n_ann_dropped += 1
+                            continue
                     target_json["annotations"].append(
                         {
                             "id": next_ann_id,
@@ -379,6 +426,12 @@ def merge_and_split_datasets(config, split_dir=None):
     if audited:
         print(f"[INFO] {n_overridden} frames use human-audited labels "
               "(drafts overridden)")
+    if cropper is not None:
+        mc = cropper.match_counts
+        print(f"[INFO] roi_crop: {n_no_poly:,} frames dropped (no calibration), "
+              f"{n_ann_dropped:,} edge-sliver boxes dropped; polygon match: "
+              f"exact {mc['exact']:,} / nearest {mc['timeline']:,} / "
+              f"latest {mc['latest']:,} / none {mc['none']:,}")
 
     # Write out the split JSON manifests
     with open(split_dir / "train.json", "w") as f:
@@ -450,7 +503,8 @@ def run_one(cfg, cfg_path):
     # split placement: session-shared when the data config is vanilla (every
     # level trains on the identical frozen split — built once, reused);
     # level-local when a point modifies the data (subsets, COCO mixing)
-    data_local = bool(cfg.get("max_train_images")) or cfg.get("include_coco", True)
+    data_local = (bool(cfg.get("max_train_images")) or cfg.get("include_coco", True)
+                  or bool(cfg.get("roi_crop")))
     split_dir = (lvl_dir / "split") if data_local else (output_dir / session / "split")
 
     params = data_params(cfg)

@@ -1,0 +1,33 @@
+# Round-2 lever: ROI-crop training (one variable vs the ladder lite1).
+# Trains on FW-geometry crops — per-camera spot-region crops exactly as the
+# sensor feeds the OD model (union of spot polygons + FW pads/expansion at
+# tensor size 384). Same 25k step budget as the ladder so the delta is
+# attributable to crop geometry alone.
+#
+# Gate (round-2 protocol): eval_inspot.py on the CROPPED val — and re-eval
+# ladder lite1 on the same cropped val for the apples-to-apples baseline
+# (the full-frame 69.1/88.7 numbers are a different geometry).
+levels:
+  - {name: lite1-roi, model: lite1, roi_crop: true, roi_tensor: 384}
+
+base_data_path: data/images
+annotated_files: auto
+split_by: sensor-hash
+split_salt: falcon-v1          # never change
+train_val_split: 0.8
+val_max_images: 5000
+seed: 42
+
+include_coco: false            # COCO frames have no spot geometry to crop
+label_source: sam3-drafts-roi
+
+output_dir: runs
+pretrained: True
+pretrained_backbone: True
+batch_size: 8
+epochs: auto
+train_steps_budget: 25000
+min_epochs: 2
+amp: true
+extra_args: "--workers 4"
+export_after_training: true

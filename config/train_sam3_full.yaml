@@ -4,6 +4,7 @@
 # An entry is a level name, or a dict with overrides for variant points:
 #   - {name: lite1-coco, model: lite1, include_coco: true, coco_max_frac: 0.25}
 #   - {name: lite0-25k, model: lite0, max_train_images: 25000}
+#   - {name: lite1-roi, model: lite1, roi_crop: true, roi_tensor: 384}  # FW-geometry crops
 # (variant/data-modified entries automatically get their own local split)
 levels: [lite0, lite1, lite2, lite3, lite4, d1, d2]
 #  - {name: lite1-coco, model: lite1, include_coco: true}   # person-gate arm

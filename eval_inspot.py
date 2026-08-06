@@ -64,13 +64,18 @@ def main():
     imgs = {i["id"]: i["file_name"] for i in val["images"]}
     kept = ign = miss = 0
     for a in val["annotations"]:
-        garage, base = imgs[a["image_id"]].split("_", 1)
-        inspot = store_index(args.store, garage).get(
-            (base, tuple(round(v, 1) for v in a["bbox"]),
-             REMAP_INV[a["category_id"]]))
-        if inspot is None:
-            miss += 1
-            inspot = False
+        if "attributes" in a:
+            # roi_crop splits carry attributes inline (crop-shifted boxes
+            # can't be matched back to the store drafts by bbox)
+            inspot = bool(a["attributes"].get("InEcoParkingSpot"))
+        else:
+            garage, base = imgs[a["image_id"]].split("_", 1)
+            inspot = store_index(args.store, garage).get(
+                (base, tuple(round(v, 1) for v in a["bbox"]),
+                 REMAP_INV[a["category_id"]]))
+            if inspot is None:
+                miss += 1
+                inspot = False
         if inspot:
             kept += 1
         else:
