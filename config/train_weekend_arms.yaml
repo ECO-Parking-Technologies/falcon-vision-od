@@ -19,8 +19,6 @@ levels:
     # FW letterboxes BLACK; effdet default pads ImageNet-mean gray
   - {name: lite2-sum,  model: lite2, fpn_name: bifpn_sum}  # <=4s latency
                                                            # challenger
-  - {name: lite1-roi-a20, model: lite1, roi_crop: true, roi_tensor: 384,
-     anchor_scale: 2.0}   # exploratory 2-lever: was ROI anchor-limited?
 
 base_data_path: data/images
 annotated_files: auto
