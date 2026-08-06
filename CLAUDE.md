@@ -41,7 +41,12 @@ annotating volume. Deep docs: [docs/training-and-experiments.md](docs/training-a
   (`/media/lopezemi/Expansion/falcon-vision-od-data/…`, 1.8T) — the home
   nvme holds only code + venvs. Backups (`backup_valuables.sh <dest>`)
   should therefore target the home disk or an external/off-machine location,
-  NOT Expansion.
+  NOT Expansion. Optional unattended backup: `setup_backup_service.sh`
+  (systemd user timer, 30 min after login + daily, idle-priority, per-machine
+  subdir `<hostname>-<machine-id8>`, NAS rsync + optional Azure rclone —
+  storing the SAS at ~/.config/falcon-vision-backup/ 0600 is an explicit
+  consented exception to RAM-only). Restore runbook:
+  docs/disaster-recovery.md.
 - GPU: single RTX 3090 (24 GB). Before heavy work:
   `nvidia-smi; pgrep -f "run_training|run_preannotation"`.
   (Considered upgrades: 5060-class cards are DOWNGRADES — less bandwidth/VRAM;
@@ -127,7 +132,17 @@ annotating volume. Deep docs: [docs/training-and-experiments.md](docs/training-a
 - **Frozen split**: `split_by: sensor-hash` — membership =
   md5(salt:garage/sensor), whole sensors to one side (no camera leakage),
   stable as the store grows; hash-ordering makes `max_train_images` subsets
-  NESTED prefixes. `val_max_images: 5000`.
+  NESTED prefixes. `val_max_images: 5000`. Shared-split placement falls back
+  to level-local when an existing session split's params.json mismatches
+  (never clobbers).
+- **Model-config overrides are config keys**: `anchor_scale`, `fpn_name`
+  (e.g. bifpn_sum) plumb through train.py → args.yaml → run_metrics →
+  validate.py so post-run scoring always rebuilds with the training config.
+  Auto-export REFUSES override-trained checkpoints until the packagers take
+  the flags (silent wrong-anchor decode otherwise).
+- **`roi_crop: true` + `roi_tensor: N`** trains on FW-geometry spot-region
+  crops (roi_crop.py mirrors AdjustRoi incl. pads 0.1 + expandWidth/Bottom;
+  calibration-matched per frame). SHELVED — see findings; kept as a flag.
 - `epochs: auto` = constant gradient-step budget (`train_steps_budget: 25000`)
   → sweep points cost equal wall-clock. **Gotcha**: timm adds 10 LR-cooldown
   epochs on top (slightly favors big datasets; zero out via
@@ -214,6 +229,21 @@ annotating volume. Deep docs: [docs/training-and-experiments.md](docs/training-a
 - **In-spot car AP baselines (strict/AP50 %, 8,441 in-spot val boxes)**:
   lite0 63.8/84.6 · lite1 69.1/88.7 · lite2 72.5/91.1 · d1 74.9/92.2 —
   in-spot accuracy is NOT saturated up the ladder (unlike all-boxes).
+- **ROI-crop training REJECTED (2026-08-06, user: ditch it)**: lite1 trained
+  on FW-geometry crops scored 73.3/92.3 in-spot vs ladder lite1's 74.1/93.1
+  on the SAME cropped val — full-frame training generalizes to crops better
+  than crop-specialized training (scale jitter covers the geometry; crops
+  lose context/diversity). The FW's inference-time crop itself is RIGHT
+  (free zoom: same lite1 is 69.1 on full frames vs 74.1 on crops).
+  eval_inspot takes --split/--predictions to score any ckpt on any split.
+- **Anchor-fit analysis (shape-IoU upper bound, 400 sensors)**: at default
+  anchor_scale 3.0, 36% of full-frame car boxes (63% person!) can't reach
+  0.5 IoU with ANY anchor; scale 1.5–2.0 dominates every slice — likely the
+  structural cause of low person AP; zero latency cost. Weekend arms test it.
+- **Letterbox fill mismatch (Greg's catch)**: FW pads BLACK; effdet defaults
+  to ImageNet-mean GRAY (input_config.py 'mean' fallback — lite configs
+  don't set fill_color). All runs to date trained gray; fill0 arm measures
+  the fix (--fill-color 0). Eval pad is top-left vs FW centered (minor).
 - **Why the ~62.5% all-boxes ceiling isn't what it looks like**: AP-large is
   87-91% (≈90% teacher fidelity on the operational band); the "missing"
   accuracy is (a) sub-resolvable tiny boxes SAM3 labels at 1008px that
@@ -266,7 +296,11 @@ annotating volume. Deep docs: [docs/training-and-experiments.md](docs/training-a
   `<run>.raw-{f32,dyn,int8}.tflite` (dev-only) · `<run>.ts.pt` · manifest
   keys `dropin_<size>_<q>` / `raw_<q>` / `torchscript`. One
   `package_dropin.py` call builds+validates all three variants;
-  `--legacy-export` = old path (no int8).
+  `--legacy-export` = old path (no int8). `<run>` =
+  run_name_for_checkpoint = `<session-dt>-<level>[-roi]` (-roi auto-appended
+  from run.json if the level name hides it) — exporters must NEVER name from
+  art_dir.name (that's literally "export" in the session layout; bit us
+  2026-08-06). generate_model_files reads train_sam3_full.yaml.
 - Big-tier packaging RESOLVED 2026-08-05/06: lite4's "failure" was the
   validation fixture (at 640 it sees a real vehicle through a wall opening in
   the empty reference frame → empty-check now fails only >0.40, the sensor's
@@ -359,15 +393,17 @@ time, judged by eval_inspot.py; commit recipe changes ONLY on measured wins.
 Annotation is ON HOLD (CVAT recreated with attribute-prefilled drafts; gold
 auditing = just-in-time before any fleet-wide push).**
 
-1. **lite1-r2 experiment** (`config/train_lite1_r2.yaml`, EMA + 3× step
-   budget) — ready/running; gate = in-spot 69.1/88.7. If it wins, EMA +
-   longer schedule graduate into the master config.
-2. Next round-2 levers (specced, in order): spot-weighted loss (polygons +
-   teacher confidence weighting), ROI-crop training (kills the across-lane
-   medium-box gap by construction, matches FW preprocessing), per-geometry
-   input size (lite1@448 build = zero-training probe), mask-tightened boxes.
-3. Plain-sum lite2 retrain (the ≤4 s challenger; weight_method='sum'
-   plumbing still to write)
+1. **Weekend arm sweep RUNNING (session 20260806-155101, launched Thu
+   ~16:00)**: lite1-a20 / lite1-a15 (anchor_scale) · lite1-ema · lite1-3x ·
+   lite1-fill0 (black letterbox) · lite2-sum (bifpn_sum ≤4s challenger).
+   All one-lever vs ladder lite1, gate = in-spot 69.1/88.7; watcher writes
+   `<session>/weekend_verdict.txt`. Winners compose into the recipe; anchor
+   winners need packager flag plumbing before export. (Supersedes
+   train_lite1_r2.yaml — its EMA/3x are now separate arms.)
+2. Next round-2 levers (specced): spot-weighted loss (polygons + teacher
+   confidence weighting), per-geometry input size (lite1@448 build =
+   zero-training probe), mask-tightened boxes. ROI-crop training: REJECTED,
+   shelved (flag remains).
 4. Round 1: photometric augmentation (night/glare/WB) + person-AP fix
 5. Spot-occupancy evaluator vs portal validations (the business metric —
    half-built now that spot polygons + in-spot eval exist)
