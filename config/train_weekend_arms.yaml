@@ -16,6 +16,9 @@ levels:
      extra_args: "--workers 4 --model-ema"}
   - {name: lite1-roi-3x,  model: lite1, roi_crop: true, roi_tensor: 384,
      train_steps_budget: 75000}
+  - {name: lite1-roi-fill0, model: lite1, roi_crop: true, roi_tensor: 384,
+     extra_args: "--workers 4 --fill-color 0"}  # FW pads BLACK; effdet default
+                                                # letterboxes ImageNet-mean gray
   - {name: lite2-roi,     model: lite2, roi_crop: true, roi_tensor: 448}
   - {name: lite2-roi-sum, model: lite2, roi_crop: true, roi_tensor: 448,
      fpn_name: bifpn_sum}   # the <=4s latency challenger (plain-sum BiFPN)
