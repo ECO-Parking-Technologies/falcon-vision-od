@@ -455,11 +455,17 @@ def merge_and_split_datasets(config, split_dir=None):
     }
 
 
-def run_training(cfg_path):
+def run_training(cfg_path, session=None):
     """Default entry: trains EVERY level in cfg['levels'] (e.g. [lite0, …,
     d2]) inside ONE session dir — the sweep across levels is the default
-    behavior. Single-model configs (`model:` only) still work."""
+    behavior. Single-model configs (`model:` only) still work.
+
+    Crash resume: relaunch with --session <existing-dt> — levels whose
+    train/coco_metrics.json already exists are skipped, so a segfault
+    mid-sweep only costs the arm it interrupted."""
     cfg = load_config(cfg_path)
+    if session:
+        cfg["session"] = session
     levels = cfg.get("levels")
     if not levels:
         return run_one(dict(cfg), cfg_path)
@@ -483,6 +489,12 @@ def run_training(cfg_path):
         if "batch_size" not in entry and model_short in overrides:
             c["batch_size"] = overrides[model_short]
         c["label_source"] = f"{cfg.get('label_source', 'run')}-{name}"
+        done_marker = (Path(cfg["output_dir"]) / session / name
+                       / "train" / "coco_metrics.json")
+        if done_marker.exists():
+            print(f"[session {session}] level {i}/{len(levels)}: {name} "
+                  "already complete — skipped (crash resume)")
+            continue
         print(f"\n{'='*70}\n[session {session}] level {i}/{len(levels)}: {name}"
               f"\n{'='*70}")
         run_one(c, cfg_path)
@@ -696,6 +708,9 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", required=True)
+    parser.add_argument("--session", default=None,
+                        help="existing session dt to resume into (completed "
+                             "levels are skipped)")
     args = parser.parse_args()
 
-    run_training(args.config)
+    run_training(args.config, session=args.session)
