@@ -231,6 +231,7 @@ def grade_vs_sam3(host, cam, frames, headers, sam3, n_sample, label):
 
     stats = {t: {"tp": 0, "det": 0, "gt": 0} for t in (0.25, 0.40)}
     graded = 0
+    records = []
     for best in sample:
         # nearest detection frame to this image
         i = bisect_left(frame_ts, best["ts"])
@@ -249,8 +250,11 @@ def grade_vs_sam3(host, cam, frames, headers, sam3, n_sample, label):
         if graded % 10 == 9:
             console.print(f"[dim]  …{label}: {graded + 1}/{len(sample)} "
                           "frames graded[/dim]")
-        gt = [[d[0] / W, d[1] / H, d[2] / W, d[3] / H]
-              for d in dets if int(d[5]) in SAM3_VEHICLE_CATS]
+        sam3_norm = [[d[0] / W, d[1] / H, d[2] / W, d[3] / H,
+                      float(d[4]), int(d[5])] for d in dets]
+        gt = [d[:4] for d in sam3_norm if d[5] in SAM3_VEHICLE_CATS]
+        records.append({"ts": f["ts"], "image": best["fileName"],
+                        "objects": f.get("objects"), "sam3": sam3_norm})
         graded += 1
         for thr in stats:
             det = sensor_boxes(f, thr)
@@ -266,7 +270,7 @@ def grade_vs_sam3(host, cam, frames, headers, sam3, n_sample, label):
             stats[thr]["det"] += len(det)
             stats[thr]["gt"] += len(gt)
     console.print(f"[dim]{label}: graded {graded} frames vs SAM3[/dim]")
-    return stats if graded else None
+    return (stats, records) if graded else (None, [])
 
 
 def main():
@@ -374,10 +378,12 @@ def main():
         from sam3_model import Sam3DraftModel
         console.print("[dim]loading SAM 3 (cache-first)…[/dim]")
         sam3 = Sam3DraftModel()
-        g_old = grade_vs_sam3(host, args.camera, old_frames, headers, sam3,
-                              args.sam3_old or args.sam3, "old model")
-        g_new = grade_vs_sam3(host, args.camera, new_frames, headers, sam3,
-                              args.sam3_new or args.sam3, "new model")
+        g_old, rec_old = grade_vs_sam3(host, args.camera, old_frames, headers,
+                                       sam3, args.sam3_old or args.sam3,
+                                       "old model")
+        g_new, rec_new = grade_vs_sam3(host, args.camera, new_frames, headers,
+                                       sam3, args.sam3_new or args.sam3,
+                                       "new model")
         gt = Table(title="vs SAM 3 ground truth (vehicle boxes, IoU>=0.5)")
         gt.add_column("metric")
         gt.add_column("old model", justify="right")
@@ -397,6 +403,25 @@ def main():
             gt.add_row(f"precision @conf>={thr}", po, pn)
             gt.add_row(f"recall    @conf>={thr}", ro, rn)
         console.print(gt)
+
+        # full run log: everything needed for offline deep-dives (per-frame
+        # sensor boxes + SAM3 verdicts + image refs into the local mirror)
+        run_dir = CACHE / host_slug(host) / "runs"
+        run_dir.mkdir(parents=True, exist_ok=True)
+        log = run_dir / (datetime.now().strftime("%Y%m%d-%H%M%S")
+                         + f"-cam{args.camera}.json")
+        log.write_text(json.dumps({
+            "meta": {"host": host, "camera": args.camera,
+                     "cutoff": args.cutoff, "new_start": args.new_start,
+                     "old_window": [b0.isoformat(), b1.isoformat()],
+                     "new_window": [a0.isoformat(), a1.isoformat()],
+                     "ran": datetime.now(timezone.utc).isoformat()},
+            "summary": {"old": old, "new": new,
+                        "old_hours": old_hours, "new_hours": new_hours},
+            "sam3_stats": {"old": g_old, "new": g_new},
+            "graded_frames": {"old": rec_old, "new": rec_new},
+        }, indent=1))
+        console.print(f"[dim]run log: {log}[/dim]")
 
 
 if __name__ == "__main__":
