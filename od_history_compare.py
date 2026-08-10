@@ -26,6 +26,9 @@ from rich.table import Table
 console = Console()
 
 
+DEBUG = False
+
+
 def fetch_window(host, cam, start, end, headers, timeout=15):
     """All archived frames with start <= ts < end (UTC hour steps)."""
     frames = []
@@ -36,8 +39,16 @@ def fetch_window(host, cam, start, end, headers, timeout=15):
                f"{t.year}/{t.month}/{t.day}/{t.hour}")
         try:
             r = requests.get(url, headers=headers, timeout=timeout)
+            if DEBUG:
+                ct = r.headers.get("content-type", "?")
+                console.print(f"[dim]{r.status_code} {ct} {len(r.content)}B "
+                              f"{url}[/dim]")
+                if "json" not in ct:
+                    console.print(f"[dim]  body: {r.text[:120]!r}[/dim]")
             data = r.json().get("data", []) if r.ok else []
-        except Exception:
+        except Exception as e:
+            if DEBUG:
+                console.print(f"[dim]  parse failed: {type(e).__name__}[/dim]")
             data = []
         got = 0
         for f in data:
@@ -195,7 +206,12 @@ def main():
                          "frames (downloads images; runs the teacher locally)")
     ap.add_argument("--cf-access", action="store_true",
                     help="Cloudflare Access service token (prompted, RAM only)")
+    ap.add_argument("--debug", action="store_true",
+                    help="print request status/content-type + enumerate the "
+                         "sensor's cameras/spaces before pulling")
     args = ap.parse_args()
+    global DEBUG
+    DEBUG = args.debug
 
     headers = {}
     if args.cf_access:
