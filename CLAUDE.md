@@ -325,11 +325,13 @@ annotating volume. Deep docs: [docs/training-and-experiments.md](docs/training-a
   partitions — with the clean graph, f32+XNNPACK (FW rebuild) is an untested
   but plausible ~1.3–1.6 s lever.
 - Residual lite2 gap vs off-the-shelf (5.4 vs 3.0 despite identical desktop
-  timing): **death by elementwise ops** — 40 SUM chains (our BiFPN uses
-  weighted fast-attention fusion; Google's lite models use plain `sum`
-  partly FOR runtime friendliness) + 40 unfused RELU6 + explicit PADs.
-  **Remaining lever: retrain lite2 with `weight_method='sum'`** (~3 h,
-  usually ≈0–0.5 AP cost) — else lite2@448 belongs to FVS2's NPU.
+  timing): the weighted-fusion elementwise-chain hypothesis is **FALSIFIED**
+  — lite2-sum (bifpn_sum retrain, accuracy-identical 72.5/91.1 in-spot,
+  car 59.2) measured **5.8 s** int8 on the bench 2026-08-10, no better than
+  weighted (5.4–5.6). Remaining suspects: unfused RELU6, explicit PADs,
+  memory traffic. **lite2@448 is DEAD on CM3 — lite1 is the CM3 family;
+  lite2 belongs to FVS2's NPU** (user decision 2026-08-10). Untested
+  long-shot: clean-f32 + XNNPACK FW rebuild (Greg-side).
 - OD Elapsed on the fusion page includes downstream per-object cost — more
   detections = more tracker/signature work; compare like-for-like scenes.
 
