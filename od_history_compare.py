@@ -58,6 +58,9 @@ def fetch_window(host, cam, start, end, headers, timeout=15):
                 got += 1
         hours_with_data += bool(got)
         t += timedelta(hours=1)
+        if not DEBUG and hours_with_data and hours_with_data % 12 == 0 and got:
+            console.print(f"[dim]  …{hours_with_data} hours fetched, "
+                          f"{len(frames)} frames so far[/dim]")
     return frames, hours_with_data
 
 
@@ -170,6 +173,9 @@ def grade_vs_sam3(host, cam, frames, headers, sam3, n_sample, label):
             continue
         H, W = img.shape[:2]
         _, dets = sam3.infer(img, input_size=(W, H))
+        if graded % 10 == 9:
+            console.print(f"[dim]  …{label}: {graded + 1}/{len(sample)} "
+                          "frames graded[/dim]")
         gt = [[d[0] / W, d[1] / H, d[2] / W, d[3] / H]
               for d in dets if int(d[5]) in SAM3_VEHICLE_CATS]
         graded += 1
