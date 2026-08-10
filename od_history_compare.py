@@ -130,37 +130,46 @@ def grade_vs_sam3(host, cam, frames, headers, sam3, n_sample, label):
 
     if not frames:
         return None
-    frames = sorted(frames, key=lambda f: f["ts"])   # even spread over the
-    step = max(1, len(frames) // n_sample)           # whole window in time
-    sample = frames[::step][:n_sample]
-    # archive image listings, cached per hour
-    img_index = {}
+    frames = sorted(frames, key=lambda f: f["ts"])
+    frame_ts = [f["ts"] for f in frames]
 
-    def images_for(ts):
-        t = datetime.fromtimestamp(ts / 1000, tz=timezone.utc)
-        key = (t.year, t.month, t.day, t.hour)
-        if key not in img_index:
-            url = f"{host}/archive/image/files/{key[0]}/{key[1]}/{key[2]}/{key[3]}"
-            try:
-                r = requests.get(url, headers=headers, timeout=15)
-                entries = r.json().get("data", []) if r.ok else []
-            except Exception:
-                entries = []
-            img_index[key] = [
-                {"fileName": e["fileName"],
-                 "ts": datetime.fromisoformat(
-                     e["dateTime"].replace("Z", "+00:00")).timestamp() * 1000}
-                for e in entries if e.get("cameraId") == cam]
-        return img_index[key]
+    # IMAGES are the scarce resource (archived far less often than detection
+    # frames) — so sample images evenly across the window and match each to
+    # its detection frame, not the other way around.
+    from bisect import bisect_left
+    images = []
+    t = datetime.fromtimestamp(frame_ts[0] / 1000, tz=timezone.utc)
+    end = datetime.fromtimestamp(frame_ts[-1] / 1000, tz=timezone.utc)
+    t = t.replace(minute=0, second=0, microsecond=0)
+    while t <= end:
+        url = f"{host}/archive/image/files/{t.year}/{t.month}/{t.day}/{t.hour}"
+        try:
+            r = requests.get(url, headers=headers, timeout=15)
+            entries = r.json().get("data", []) if r.ok else []
+        except Exception:
+            entries = []
+        images += [
+            {"fileName": e["fileName"],
+             "ts": datetime.fromisoformat(
+                 e["dateTime"].replace("Z", "+00:00")).timestamp() * 1000}
+            for e in entries if e.get("cameraId") == cam]
+        t += timedelta(hours=1)
+    images.sort(key=lambda e: e["ts"])
+    console.print(f"[dim]{label}: {len(images)} archived images in window[/dim]")
+    if not images:
+        return None
+    step = max(1, len(images) // n_sample)
+    sample = images[::step][:n_sample]
 
     stats = {t: {"tp": 0, "det": 0, "gt": 0} for t in (0.25, 0.40)}
     graded = 0
-    for f in sample:
-        cands = images_for(f["ts"])
-        if not cands:
-            continue
-        best = min(cands, key=lambda e: abs(e["ts"] - f["ts"]))
-        if abs(best["ts"] - f["ts"]) > 10_000:   # >10s apart: not this frame
+    for best in sample:
+        # nearest detection frame to this image
+        i = bisect_left(frame_ts, best["ts"])
+        cands = [j for j in (i - 1, i) if 0 <= j < len(frames)]
+        j = min(cands, key=lambda j: abs(frame_ts[j] - best["ts"]))
+        f = frames[j]
+        if abs(frame_ts[j] - best["ts"]) > 10_000:   # >10s apart: skip
             continue
         try:
             r = requests.get(f"{host}/archive/image/image/{best['fileName']}",
