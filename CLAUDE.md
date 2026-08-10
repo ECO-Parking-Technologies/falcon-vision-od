@@ -403,6 +403,17 @@ time, judged by eval_inspot.py; commit recipe changes ONLY on measured wins.
 Annotation is ON HOLD (CVAT recreated with attribute-prefilled drafts; gold
 auditing = just-in-time before any fleet-wide push).**
 
+**Rollout ladder (user plan 2026-08-10)**: Mon night 3x on 3 Switch sensors
+(field A/B vs SAM3, od_history_compare) → Tue: composed lite1-a20-3x-fill0
+(69.8/90.9, car 56.8, person 4.3 — best lite1) on all three → Wed: split
+pilot (fv7a2f8e -> composed lite0, others stay lite1 — miniature of the
+garage-wide config) → weekend: garage-wide lite0/lite1 split at Switch →
+if good: full retrain with combo recipe as default (fold in: master-config
+anchor_scale 2.0 + fill0 + 3x budget for deployment tiers, best-ckpt
+selection by car AP, --cooldown-epochs decision — NEW baselines, old
+comparisons reset) → beta in other garages. Gold audit + spot-occupancy
+evaluator should land before beta.
+
 1. **Weekend arm sweep RUNNING (session 20260806-155101, launched Thu
    ~16:00)**: lite1-a20 / lite1-a15 (anchor_scale) · lite1-ema · lite1-3x ·
    lite1-fill0 (black letterbox) · lite2-sum (bifpn_sum ≤4s challenger).
