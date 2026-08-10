@@ -258,8 +258,8 @@ def grade_vs_sam3(host, cam, frames, headers, sam3, n_sample, label):
         if graded % 10 == 9:
             console.print(f"[dim]  …{label}: {graded + 1}/{len(sample)} "
                           "frames graded[/dim]")
-        sam3_norm = [[d[0] / W, d[1] / H, d[2] / W, d[3] / H,
-                      float(d[4]), int(d[5])] for d in dets]
+        sam3_norm = [[float(d[0]) / W, float(d[1]) / H, float(d[2]) / W,
+                      float(d[3]) / H, float(d[4]), int(d[5])] for d in dets]
         gt = [d[:4] for d in sam3_norm if d[5] in SAM3_VEHICLE_CATS]
         records.append({"ts": f["ts"], "image": best["fileName"],
                         "objects": f.get("objects"), "sam3": sam3_norm})
