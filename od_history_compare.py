@@ -45,18 +45,24 @@ def cached_json(url, cache_file, headers, complete, timeout=15):
     if cache_file.exists():
         return json.loads(cache_file.read_text())
     payload = None
-    try:
-        r = requests.get(url, headers=headers, timeout=timeout)
-        if DEBUG:
-            ct = r.headers.get("content-type", "?")
-            console.print(f"[dim]{r.status_code} {ct} {len(r.content)}B "
-                          f"{url}[/dim]")
-            if "json" not in ct:
-                console.print(f"[dim]  body: {r.text[:120]!r}[/dim]")
-        payload = r.json() if r.ok else None
-    except Exception as e:
-        if DEBUG:
-            console.print(f"[dim]  fetch/parse failed: {type(e).__name__}[/dim]")
+    for attempt in (1, 2):   # one retry: rides out transient gw/tunnel blips
+        try:
+            r = requests.get(url, headers=headers, timeout=timeout)
+            if DEBUG:
+                ct = r.headers.get("content-type", "?")
+                console.print(f"[dim]{r.status_code} {ct} {len(r.content)}B "
+                              f"{url}[/dim]")
+                if "json" not in ct:
+                    console.print(f"[dim]  body: {r.text[:120]!r}[/dim]")
+            payload = r.json() if r.ok else None
+            break
+        except Exception as e:
+            if DEBUG:
+                console.print(f"[dim]  fetch/parse failed (try {attempt}): "
+                              f"{type(e).__name__}[/dim]")
+            if attempt == 1:
+                import time
+                time.sleep(3)
     if payload is not None and complete:
         cache_file.parent.mkdir(parents=True, exist_ok=True)
         cache_file.write_text(json.dumps(payload))
@@ -212,7 +218,9 @@ def grade_vs_sam3(host, cam, frames, headers, sam3, n_sample, label):
     import numpy as np
 
     if not frames:
-        return None
+        console.print(f"[yellow]{label}: no detection frames in window — "
+                      "skipping SAM3 grading for this side[/yellow]")
+        return None, []
     frames = sorted(frames, key=lambda f: f["ts"])
     frame_ts = [f["ts"] for f in frames]
 
@@ -225,7 +233,7 @@ def grade_vs_sam3(host, cam, frames, headers, sam3, n_sample, label):
     images = list_images(host, cam, start, end, headers)
     console.print(f"[dim]{label}: {len(images)} archived images in window[/dim]")
     if not images:
-        return None
+        return None, []
     step = max(1, len(images) // n_sample)
     sample = images[::step][:n_sample]
 
