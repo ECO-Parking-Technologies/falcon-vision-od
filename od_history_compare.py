@@ -279,8 +279,13 @@ def main():
                          "(e.g. 2026-08-10T09:41:00-04:00)")
     ap.add_argument("--before-hours", type=int, default=48,
                     help="old-model window: this many hours before cutoff")
+    ap.add_argument("--new-start", default=None,
+                    help="ISO start of the new-model window (default: same "
+                         "as --cutoff). Set it later than the cutoff to "
+                         "leave a buffer around the install for clean "
+                         "old/new separation")
     ap.add_argument("--after-hours", type=int, default=None,
-                    help="new-model window length (default: cutoff -> now)")
+                    help="new-model window length (default: start -> now)")
     ap.add_argument("--sam3", type=int, default=0, metavar="N",
                     help="grade each window vs SAM3 on N sampled archive "
                          "frames (downloads images; runs the teacher locally)")
@@ -316,8 +321,9 @@ def main():
     cutoff = datetime.fromisoformat(args.cutoff).astimezone(timezone.utc)
     now = datetime.now(timezone.utc)
     b0, b1 = cutoff - timedelta(hours=args.before_hours), cutoff
-    a0 = cutoff
-    a1 = (cutoff + timedelta(hours=args.after_hours)
+    a0 = (datetime.fromisoformat(args.new_start).astimezone(timezone.utc)
+          if args.new_start else cutoff)
+    a1 = (a0 + timedelta(hours=args.after_hours)
           if args.after_hours else now)
 
     host = args.host.rstrip("/")
