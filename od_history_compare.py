@@ -15,8 +15,10 @@ as every portal/CVAT tool). Plain LAN sensors: --host http://<ip> and omit
 --cf-access.
 """
 import argparse
+import json
 import statistics
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import requests
 from rich.console import Console
@@ -27,29 +29,55 @@ console = Console()
 
 
 DEBUG = False
+# Sensors truncate their archive after a handful of days — everything pulled
+# is cached here permanently (backed up with the other valuables), so a
+# later matched-window rerun never depends on data the sensor has expired.
+CACHE = Path("data/sensor_archive")
 
 
-def fetch_window(host, cam, start, end, headers, timeout=15):
+def host_slug(host):
+    return host.split("//")[-1].split("/")[0].split(".")[0]
+
+
+def cached_json(url, cache_file, headers, complete, timeout=15):
+    """GET with a permanent per-hour cache. Only COMPLETE past hours are
+    written (an in-progress hour would freeze a partial listing)."""
+    if cache_file.exists():
+        return json.loads(cache_file.read_text())
+    payload = None
+    try:
+        r = requests.get(url, headers=headers, timeout=timeout)
+        if DEBUG:
+            ct = r.headers.get("content-type", "?")
+            console.print(f"[dim]{r.status_code} {ct} {len(r.content)}B "
+                          f"{url}[/dim]")
+            if "json" not in ct:
+                console.print(f"[dim]  body: {r.text[:120]!r}[/dim]")
+        payload = r.json() if r.ok else None
+    except Exception as e:
+        if DEBUG:
+            console.print(f"[dim]  fetch/parse failed: {type(e).__name__}[/dim]")
+    if payload is not None and complete:
+        cache_file.parent.mkdir(parents=True, exist_ok=True)
+        cache_file.write_text(json.dumps(payload))
+    return payload or {}
+
+
+def hour_complete(t):
+    return t + timedelta(hours=1) < datetime.now(timezone.utc)
+
+
+def fetch_window(host, cam, start, end, headers):
     """All archived frames with start <= ts < end (UTC hour steps)."""
     frames = []
     hours_with_data = 0
+    base = CACHE / host_slug(host) / f"camera-{cam}"
     t = start.replace(minute=0, second=0, microsecond=0)
     while t < end:
         url = (f"{host}/archive/objects/data/camera-{cam}/"
                f"{t.year}/{t.month}/{t.day}/{t.hour}")
-        try:
-            r = requests.get(url, headers=headers, timeout=timeout)
-            if DEBUG:
-                ct = r.headers.get("content-type", "?")
-                console.print(f"[dim]{r.status_code} {ct} {len(r.content)}B "
-                              f"{url}[/dim]")
-                if "json" not in ct:
-                    console.print(f"[dim]  body: {r.text[:120]!r}[/dim]")
-            data = r.json().get("data", []) if r.ok else []
-        except Exception as e:
-            if DEBUG:
-                console.print(f"[dim]  parse failed: {type(e).__name__}[/dim]")
-            data = []
+        cf = base / f"objects-{t:%Y-%m-%d-%H}.json"
+        data = cached_json(url, cf, headers, hour_complete(t)).get("data", [])
         got = 0
         for f in data:
             ts = datetime.fromtimestamp(f["ts"] / 1000, tz=timezone.utc)
@@ -122,6 +150,61 @@ def sensor_boxes(frame, min_conf):
     return out
 
 
+def list_images(host, cam, start, end, headers):
+    """Archived image entries for [start, end], hour-cached like detections.
+    The listing endpoint is not camera-scoped — cache all, filter here."""
+    base = CACHE / host_slug(host)
+    images = []
+    t = start.replace(minute=0, second=0, microsecond=0)
+    while t <= end:
+        url = f"{host}/archive/image/files/{t.year}/{t.month}/{t.day}/{t.hour}"
+        cf = base / f"imagefiles-{t:%Y-%m-%d-%H}.json"
+        entries = cached_json(url, cf, headers, hour_complete(t)).get("data", [])
+        images += [
+            {"fileName": e["fileName"],
+             "ts": datetime.fromisoformat(
+                 e["dateTime"].replace("Z", "+00:00")).timestamp() * 1000}
+            for e in entries if e.get("cameraId") == cam]
+        t += timedelta(hours=1)
+    images.sort(key=lambda e: e["ts"])
+    return images
+
+
+def fetch_image(host, file_name, headers):
+    """Image bytes, cached permanently (images are immutable once archived)."""
+    cf = CACHE / host_slug(host) / "images" / Path(file_name).name
+    if cf.exists():
+        return cf.read_bytes()
+    try:
+        r = requests.get(f"{host}/archive/image/image/{file_name}",
+                         headers=headers, timeout=20)
+        if not r.ok or not r.content:
+            return None
+    except Exception:
+        return None
+    cf.parent.mkdir(parents=True, exist_ok=True)
+    cf.write_bytes(r.content)
+    return r.content
+
+
+def mirror_images(host, cam, start, end, headers):
+    """Download every archived image in the window into the local cache —
+    run this before the sensor's rolling truncation eats the evidence."""
+    entries = list_images(host, cam, start, end, headers)
+    got = new = 0
+    for e in entries:
+        cf = CACHE / host_slug(host) / "images" / Path(e["fileName"]).name
+        existed = cf.exists()
+        if fetch_image(host, e["fileName"], headers) is not None:
+            got += 1
+            if not existed:
+                new += 1
+                if new % 50 == 0:
+                    console.print(f"[dim]  …mirrored {new} new images[/dim]")
+    console.print(f"[green]mirror: {got}/{len(entries)} images in cache "
+                  f"({new} newly downloaded)[/green]")
+
+
 def grade_vs_sam3(host, cam, frames, headers, sam3, n_sample, label):
     """Sample frames, fetch their archive images, draft with SAM3, and score
     the archived sensor detections against the teacher (IoU>=0.5 greedy)."""
@@ -137,24 +220,9 @@ def grade_vs_sam3(host, cam, frames, headers, sam3, n_sample, label):
     # frames) — so sample images evenly across the window and match each to
     # its detection frame, not the other way around.
     from bisect import bisect_left
-    images = []
-    t = datetime.fromtimestamp(frame_ts[0] / 1000, tz=timezone.utc)
+    start = datetime.fromtimestamp(frame_ts[0] / 1000, tz=timezone.utc)
     end = datetime.fromtimestamp(frame_ts[-1] / 1000, tz=timezone.utc)
-    t = t.replace(minute=0, second=0, microsecond=0)
-    while t <= end:
-        url = f"{host}/archive/image/files/{t.year}/{t.month}/{t.day}/{t.hour}"
-        try:
-            r = requests.get(url, headers=headers, timeout=15)
-            entries = r.json().get("data", []) if r.ok else []
-        except Exception:
-            entries = []
-        images += [
-            {"fileName": e["fileName"],
-             "ts": datetime.fromisoformat(
-                 e["dateTime"].replace("Z", "+00:00")).timestamp() * 1000}
-            for e in entries if e.get("cameraId") == cam]
-        t += timedelta(hours=1)
-    images.sort(key=lambda e: e["ts"])
+    images = list_images(host, cam, start, end, headers)
     console.print(f"[dim]{label}: {len(images)} archived images in window[/dim]")
     if not images:
         return None
@@ -171,13 +239,9 @@ def grade_vs_sam3(host, cam, frames, headers, sam3, n_sample, label):
         f = frames[j]
         if abs(frame_ts[j] - best["ts"]) > 10_000:   # >10s apart: skip
             continue
-        try:
-            r = requests.get(f"{host}/archive/image/image/{best['fileName']}",
-                             headers=headers, timeout=20)
-            img = cv2.imdecode(np.frombuffer(r.content, np.uint8),
-                               cv2.IMREAD_COLOR)
-        except Exception:
-            img = None
+        raw = fetch_image(host, best["fileName"], headers)
+        img = (cv2.imdecode(np.frombuffer(raw, np.uint8), cv2.IMREAD_COLOR)
+               if raw else None)
         if img is None:
             continue
         H, W = img.shape[:2]
@@ -227,6 +291,10 @@ def main():
                     help="override N for the new-model window")
     ap.add_argument("--cf-access", action="store_true",
                     help="Cloudflare Access service token (prompted, RAM only)")
+    ap.add_argument("--mirror", action="store_true",
+                    help="download EVERY archived image in both windows into "
+                         "data/sensor_archive/ (protects evidence from the "
+                         "sensor's rolling truncation)")
     ap.add_argument("--debug", action="store_true",
                     help="print request status/content-type + enumerate the "
                          "sensor's cameras/spaces before pulling")
@@ -257,6 +325,8 @@ def main():
     console.print(f"new model: [bold]{a0:%m-%d %H:%M} -> {a1:%m-%d %H:%M}[/] UTC")
     old_frames, old_hours = fetch_window(host, args.camera, b0, b1, headers)
     new_frames, new_hours = fetch_window(host, args.camera, a0, a1, headers)
+    if args.mirror:
+        mirror_images(host, args.camera, b0, a1, headers)
     old, new = window_stats(old_frames), window_stats(new_frames)
 
     t = Table(title=f"camera {args.camera} — OD archive, old vs new model")

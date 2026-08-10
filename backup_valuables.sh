@@ -38,14 +38,14 @@ retry() {  # retry <label> <cmd...> — 3 attempts, 30s/120s backoff
 
 echo "== backup -> $DEST"
 retry "runs" rsync -a --info=progress2 --copy-links "$REPO/runs/" "$DEST/runs/"
-retry "data" rsync -a --info=progress2 --copy-links \
-  "$REPO/data/images" \
-  "$REPO/data/manifest.sqlite" \
-  "$REPO/data/spot_polygons.json" \
-  "$REPO/data/sam3_sandbox" \
-  "$REPO/data/probes" \
-  "$REPO/data/annotation_queue_phase1.json" \
-  "$DEST/data/"
+SRCS=("$REPO/data/images" "$REPO/data/manifest.sqlite"
+      "$REPO/data/spot_polygons.json" "$REPO/data/sam3_sandbox"
+      "$REPO/data/probes" "$REPO/data/annotation_queue_phase1.json"
+      "$REPO/data/sensor_archive")   # sensor OD-history mirror (sensors
+                                     # truncate; this is the only copy)
+EXIST=()
+for s in "${SRCS[@]}"; do [ -e "$s" ] && EXIST+=("$s"); done
+retry "data" rsync -a --info=progress2 --copy-links "${EXIST[@]}" "$DEST/data/"
 echo "local backup complete ($(du -sh "$DEST" | cut -f1))"
 
 if [ -n "${AZURE_SAS_URL:-}" ]; then
