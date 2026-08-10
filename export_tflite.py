@@ -145,6 +145,9 @@ def find_ckpt(output_dir: Path) -> Path:
     return ckpts[-1]
 
 
+MODEL_OVERRIDES = {}  # trained-with config overrides, set from CLI in main()
+
+
 def load_network(model_name, num_classes, ckpt_path):
     net = create_model(
         model_name,
@@ -152,6 +155,7 @@ def load_network(model_name, num_classes, ckpt_path):
         num_classes=num_classes,
         pretrained=False,
         pretrained_backbone=False,
+        **{k: v for k, v in MODEL_OVERRIDES.items() if v is not None},
     )
     raw = torch.load(ckpt_path, map_location="cpu", weights_only=False)
     sd = raw.get("state_dict", raw)
@@ -177,7 +181,12 @@ def main():
                          "(default: base_data_path from preannotation/config.yaml)")
     ap.add_argument("--calib-count", type=int, default=64)
     ap.add_argument("--skip-int8", action="store_true")
+    ap.add_argument("--anchor-scale", type=float, default=None,
+                    help="model-config override the checkpoint trained with")
+    ap.add_argument("--fpn-name", default=None,
+                    help="model-config override (e.g. bifpn_sum)")
     args = ap.parse_args()
+    MODEL_OVERRIDES.update(anchor_scale=args.anchor_scale, fpn_name=args.fpn_name)
 
     cfg = yaml.safe_load(Path("config/train_sam3_full.yaml").read_text())
     model_name = args.model or cfg["model"]

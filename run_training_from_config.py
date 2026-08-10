@@ -637,16 +637,9 @@ def run_one(cfg, cfg_path):
         print(f"[report] skipped ({e})")
 
     # 9) auto-export artifacts from this run's best checkpoint
+    # (anchor_scale/fpn_name overrides are passed through to every exporter)
     if cfg.get("export_after_training", True):
-        if cfg.get("anchor_scale") is not None or cfg.get("fpn_name"):
-            # packaging tools don't take these overrides yet: an
-            # anchor_scale-trained checkpoint packaged with default anchors
-            # decodes boxes silently wrong. Plumb before exporting.
-            print("[export] SKIPPED: model-config overrides "
-                  "(anchor_scale/fpn_name) are not plumbed into the "
-                  "packagers yet — export this checkpoint manually once "
-                  "package_dropin supports the flags")
-        elif (lvl_dir / "train" / "model_best.pth.tar").exists():
+        if (lvl_dir / "train" / "model_best.pth.tar").exists():
             export_artifacts(cfg, lvl_dir / "train" / "model_best.pth.tar")
         else:
             print("[export] no best checkpoint found, skipping export")
@@ -681,19 +674,26 @@ def export_artifacts(cfg, ckpt=None):
               "tf_efficientdet_d0": 512, "tf_efficientdet_d1": 640,
               "tf_efficientdet_d2": 768}
     native = str(NATIVE.get(model, 448))
+    # trained-with model-config overrides ride along to every exporter —
+    # they rebuild the network AND (packager) the grafted decode anchors
+    ov = []
+    if cfg.get("anchor_scale") is not None:
+        ov += ["--anchor-scale", str(cfg["anchor_scale"])]
+    if cfg.get("fpn_name"):
+        ov += ["--fpn-name", str(cfg["fpn_name"])]
     jobs = [
         [sys.executable, str(repo / "generate_model_files.py"),
-         "--checkpoint", ckpt, "--model", model],
+         "--checkpoint", ckpt, "--model", model] + ov,
     ]
     if export_py.exists():
         jobs.append([str(export_py), str(repo / "export_tflite.py"),
-                     "--checkpoint", ckpt, "--model", model])
+                     "--checkpoint", ckpt, "--model", model] + ov)
         if (repo / "package_dropin.py").exists():
             # one call, clean export path, all three variants at native size:
             # <run>.dropin-<size>-{f32,dyn,int8}.tflite
             jobs.append([str(export_py), str(repo / "package_dropin.py"),
                          "--checkpoint", ckpt, "--model", model,
-                         "--input-size", native])
+                         "--input-size", native] + ov)
     else:
         print("[export] export venv missing (run setup_export_venv.sh) — TFLite export skipped")
     for job in jobs:

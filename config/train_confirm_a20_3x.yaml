@@ -1,0 +1,32 @@
+# Round-2 composition confirm run: the weekend's winning levers combined.
+#   anchor_scale 2.0  (a20: +1.7 in-spot AP50, +7 small-band car, -2 large)
+#   3x step budget    (3x:  +0.8 in-spot strict, best large band + person)
+#   black letterbox   (fill0: wash on gray-padded eval, matches FW = free)
+# Hypothesis: 3x's large-band gain offsets a20's large-band cost while
+# keeping the small-band win. Gate: beat BOTH single-arm fronts —
+# 69.9 strict (3x) and 90.4 AP50 (a20). EMA excluded (lost at short
+# schedule); a15 excluded (anchor curve peaks ~2.0).
+levels:
+  - {name: lite1-a20-3x-fill0, model: lite1, anchor_scale: 2.0,
+     train_steps_budget: 75000, extra_args: "--workers 4 --fill-color 0"}
+
+base_data_path: data/images
+annotated_files: auto
+split_by: sensor-hash
+split_salt: falcon-v1          # never change
+train_val_split: 0.8
+val_max_images: 5000
+seed: 42
+
+include_coco: false
+label_source: sam3-drafts-r2-confirm
+
+output_dir: runs
+pretrained: True
+pretrained_backbone: True
+batch_size: 8
+epochs: auto
+epochs_note: "75k budget -> 6 sched + 10 cooldown epochs"
+min_epochs: 2
+amp: true
+export_after_training: true    # packagers take --anchor-scale now

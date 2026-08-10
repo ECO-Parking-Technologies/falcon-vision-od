@@ -40,7 +40,11 @@ def main():
     ap.add_argument("--checkpoint", type=Path, default=None,
                     help="Checkpoint to export (default: newest model_best.pth.tar in output_dir)")
     ap.add_argument("--model", default=None,
-                    help="effdet model name (default: `model` from train_wrapper_config.yaml)")
+                    help="effdet model name (default: `model` from train_sam3_full.yaml)")
+    ap.add_argument("--anchor-scale", type=float, default=None,
+                    help="model-config override the checkpoint trained with")
+    ap.add_argument("--fpn-name", default=None,
+                    help="model-config override (e.g. bifpn_sum)")
     args = ap.parse_args()
 
     cfg = load_cfg()
@@ -66,6 +70,8 @@ def main():
         num_classes=num_classes,
         pretrained_backbone=False,
         pretrained=False,
+        anchor_scale=args.anchor_scale,
+        fpn_name=args.fpn_name,
     )
     sd = {(k[len("module."):] if k.startswith("module.") else k): v for k, v in sd.items()}
     sd = {(k[len("model."):] if k.startswith("model.") else k): v for k, v in sd.items()}

@@ -79,6 +79,12 @@ def find_ckpt(output_dir: Path) -> Path:
     return ckpts[-1]
 
 
+# model-config overrides the checkpoint was TRAINED with (anchor_scale,
+# fpn_name) — set from CLI in main(). The network build AND the grafted
+# postprocess anchors must both apply them, or boxes decode silently wrong.
+MODEL_OVERRIDES = {}
+
+
 def load_network(model_name, num_classes, ckpt_path):
     net = create_model(
         model_name,
@@ -89,6 +95,7 @@ def load_network(model_name, num_classes, ckpt_path):
         # FPN resample sizes are frozen at build time, so the net must be
         # constructed at the firmware's 448 input (weights are fully conv).
         image_size=(IMAGE_SIZE, IMAGE_SIZE),
+        **{k: v for k, v in MODEL_OVERRIDES.items() if v is not None},
     )
     raw = torch.load(ckpt_path, map_location="cpu", weights_only=False)
     sd = raw.get("state_dict", raw)
@@ -169,6 +176,8 @@ def build_anchors(model_name, size=IMAGE_SIZE):
     """
     cfg = get_efficientdet_config(model_name)
     cfg.image_size = (size, size)
+    if MODEL_OVERRIDES.get("anchor_scale") is not None:
+        cfg.anchor_scale = MODEL_OVERRIDES["anchor_scale"]
     boxes = Anchors.from_config(cfg).boxes.numpy()  # [N,4] yxyx pixels
     yc = (boxes[:, 0] + boxes[:, 2]) / 2.0 / size
     xc = (boxes[:, 1] + boxes[:, 3]) / 2.0 / size
@@ -589,6 +598,10 @@ def main():
     ap.add_argument("--calib-dir", type=Path, default=Path("data/images"),
                     help="calibration image root for the int8 variant")
     ap.add_argument("--calib-count", type=int, default=256)
+    ap.add_argument("--anchor-scale", type=float, default=None,
+                    help="model-config override the checkpoint trained with")
+    ap.add_argument("--fpn-name", default=None,
+                    help="model-config override (e.g. bifpn_sum)")
     ap.add_argument("--legacy-export", action="store_true",
                     help="old litert-torch conversion path (transpose-heavy; "
                          "~15-20%% slower on-device) — fallback only")
@@ -600,6 +613,7 @@ def main():
     model_name = args.model or cfg["model"]
     global IMAGE_SIZE
     IMAGE_SIZE = args.input_size
+    MODEL_OVERRIDES.update(anchor_scale=args.anchor_scale, fpn_name=args.fpn_name)
     num_classes = args.num_classes or cfg.get("num_classes", len(load_label_map()))
     out_dir = Path(cfg["output_dir"])
     ckpt = args.checkpoint or find_ckpt(out_dir)
