@@ -1,0 +1,29 @@
+# Round-2 composed recipe on the FALLBACK release candidate (lite0-320).
+# Same levers as the lite1 confirm: anchor_scale 2.0 + 3x budget + black
+# letterbox. At 320 input the default-anchor mismatch is worse than at 384
+# (anchors are fixed pixels, boxes shrink with input), so a20 should help
+# lite0 at least as much. Gate: ladder lite0 in-spot 63.8 strict / 84.6
+# AP50, all-boxes car 47.6.
+levels:
+  - {name: lite0-a20-3x-fill0, model: lite0, anchor_scale: 2.0,
+     train_steps_budget: 75000, extra_args: "--workers 4 --fill-color 0"}
+
+base_data_path: data/images
+annotated_files: auto
+split_by: sensor-hash
+split_salt: falcon-v1          # never change
+train_val_split: 0.8
+val_max_images: 5000
+seed: 42
+
+include_coco: false
+label_source: sam3-drafts-r2-confirm-lite0
+
+output_dir: runs
+pretrained: True
+pretrained_backbone: True
+batch_size: 8
+epochs: auto
+min_epochs: 2
+amp: true
+export_after_training: true
