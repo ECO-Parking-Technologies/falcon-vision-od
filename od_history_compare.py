@@ -81,6 +81,103 @@ def window_stats(frames):
     }
 
 
+SAM3_VEHICLE_CATS = {2, 3, 4, 6, 8}   # bicycle,car,moto,bus,truck -> VEHICLE
+
+
+def iou(a, b):
+    ix = max(0.0, min(a[2], b[2]) - max(a[0], b[0]))
+    iy = max(0.0, min(a[3], b[3]) - max(a[1], b[1]))
+    inter = ix * iy
+    ua = (a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - inter
+    return inter / ua if ua > 0 else 0.0
+
+
+def sensor_boxes(frame, min_conf):
+    """Archived objects -> normalized [x1,y1,x2,y2] vehicle boxes."""
+    out = []
+    objs = frame.get("objects") or []
+    if not isinstance(objs, list):
+        objs = list(objs.values())
+    for o in objs:
+        tl, br = o.get("topLeft"), o.get("bottomRight")
+        if not tl or not br or (o.get("confidence") or 0) < min_conf:
+            continue
+        if (o.get("type") or "").upper() == "PERSON":
+            continue
+        out.append([tl["x"], tl["y"], br["x"], br["y"]])
+    return out
+
+
+def grade_vs_sam3(host, cam, frames, headers, sam3, n_sample, label):
+    """Sample frames, fetch their archive images, draft with SAM3, and score
+    the archived sensor detections against the teacher (IoU>=0.5 greedy)."""
+    import cv2
+    import numpy as np
+
+    if not frames:
+        return None
+    step = max(1, len(frames) // n_sample)
+    sample = frames[::step][:n_sample]
+    # archive image listings, cached per hour
+    img_index = {}
+
+    def images_for(ts):
+        t = datetime.fromtimestamp(ts / 1000, tz=timezone.utc)
+        key = (t.year, t.month, t.day, t.hour)
+        if key not in img_index:
+            url = f"{host}/archive/image/files/{key[0]}/{key[1]}/{key[2]}/{key[3]}"
+            try:
+                r = requests.get(url, headers=headers, timeout=15)
+                entries = r.json().get("data", []) if r.ok else []
+            except Exception:
+                entries = []
+            img_index[key] = [
+                {"fileName": e["fileName"],
+                 "ts": datetime.fromisoformat(
+                     e["dateTime"].replace("Z", "+00:00")).timestamp() * 1000}
+                for e in entries if e.get("cameraId") == cam]
+        return img_index[key]
+
+    stats = {t: {"tp": 0, "det": 0, "gt": 0} for t in (0.25, 0.40)}
+    graded = 0
+    for f in sample:
+        cands = images_for(f["ts"])
+        if not cands:
+            continue
+        best = min(cands, key=lambda e: abs(e["ts"] - f["ts"]))
+        if abs(best["ts"] - f["ts"]) > 10_000:   # >10s apart: not this frame
+            continue
+        try:
+            r = requests.get(f"{host}/archive/image/image/{best['fileName']}",
+                             headers=headers, timeout=20)
+            img = cv2.imdecode(np.frombuffer(r.content, np.uint8),
+                               cv2.IMREAD_COLOR)
+        except Exception:
+            img = None
+        if img is None:
+            continue
+        H, W = img.shape[:2]
+        _, dets = sam3.infer(img, input_size=(W, H))
+        gt = [[d[0] / W, d[1] / H, d[2] / W, d[3] / H]
+              for d in dets if int(d[5]) in SAM3_VEHICLE_CATS]
+        graded += 1
+        for thr in stats:
+            det = sensor_boxes(f, thr)
+            used = set()
+            tp = 0
+            for db in det:
+                m = max(((iou(db, g), j) for j, g in enumerate(gt)
+                         if j not in used), default=(0, -1))
+                if m[0] >= 0.5:
+                    used.add(m[1])
+                    tp += 1
+            stats[thr]["tp"] += tp
+            stats[thr]["det"] += len(det)
+            stats[thr]["gt"] += len(gt)
+    console.print(f"[dim]{label}: graded {graded} frames vs SAM3[/dim]")
+    return stats if graded else None
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--host", required=True,
@@ -93,6 +190,9 @@ def main():
                     help="old-model window: this many hours before cutoff")
     ap.add_argument("--after-hours", type=int, default=None,
                     help="new-model window length (default: cutoff -> now)")
+    ap.add_argument("--sam3", type=int, default=0, metavar="N",
+                    help="grade each window vs SAM3 on N sampled archive "
+                         "frames (downloads images; runs the teacher locally)")
     ap.add_argument("--cf-access", action="store_true",
                     help="Cloudflare Access service token (prompted, RAM only)")
     args = ap.parse_args()
@@ -153,6 +253,37 @@ def main():
     if not old["frames"] or not new["frames"]:
         console.print("[yellow]one window has no frames — check camera id, "
                       "date range, or whether archiving is enabled[/yellow]")
+
+    if args.sam3:
+        import sys
+        from pathlib import Path as P
+        sys.path.insert(0, str(P(__file__).parent / "preannotation"))
+        from sam3_model import Sam3DraftModel
+        console.print("[dim]loading SAM 3 (cache-first)…[/dim]")
+        sam3 = Sam3DraftModel()
+        g_old = grade_vs_sam3(host, args.camera, old_frames, headers, sam3,
+                              args.sam3, "old model")
+        g_new = grade_vs_sam3(host, args.camera, new_frames, headers, sam3,
+                              args.sam3, "new model")
+        gt = Table(title="vs SAM 3 ground truth (vehicle boxes, IoU>=0.5)")
+        gt.add_column("metric")
+        gt.add_column("old model", justify="right")
+        gt.add_column("new model", justify="right")
+
+        def pr(s, thr):
+            if not s:
+                return "—", "—"
+            d = s[thr]
+            p = d["tp"] / d["det"] if d["det"] else 0
+            r = d["tp"] / d["gt"] if d["gt"] else 0
+            return f"{p:.2f}", f"{r:.2f}"
+
+        for thr in (0.25, 0.40):
+            po, ro = pr(g_old, thr)
+            pn, rn = pr(g_new, thr)
+            gt.add_row(f"precision @conf>={thr}", po, pn)
+            gt.add_row(f"recall    @conf>={thr}", ro, rn)
+        console.print(gt)
 
 
 if __name__ == "__main__":
