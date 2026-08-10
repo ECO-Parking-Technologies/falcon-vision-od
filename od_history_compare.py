@@ -127,7 +127,8 @@ def grade_vs_sam3(host, cam, frames, headers, sam3, n_sample, label):
 
     if not frames:
         return None
-    step = max(1, len(frames) // n_sample)
+    frames = sorted(frames, key=lambda f: f["ts"])   # even spread over the
+    step = max(1, len(frames) // n_sample)           # whole window in time
     sample = frames[::step][:n_sample]
     # archive image listings, cached per hour
     img_index = {}
@@ -204,6 +205,11 @@ def main():
     ap.add_argument("--sam3", type=int, default=0, metavar="N",
                     help="grade each window vs SAM3 on N sampled archive "
                          "frames (downloads images; runs the teacher locally)")
+    ap.add_argument("--sam3-old", type=int, default=None, metavar="N",
+                    help="override N for the old-model window (e.g. sample "
+                         "a long weekend window more densely)")
+    ap.add_argument("--sam3-new", type=int, default=None, metavar="N",
+                    help="override N for the new-model window")
     ap.add_argument("--cf-access", action="store_true",
                     help="Cloudflare Access service token (prompted, RAM only)")
     ap.add_argument("--debug", action="store_true",
@@ -278,9 +284,9 @@ def main():
         console.print("[dim]loading SAM 3 (cache-first)…[/dim]")
         sam3 = Sam3DraftModel()
         g_old = grade_vs_sam3(host, args.camera, old_frames, headers, sam3,
-                              args.sam3, "old model")
+                              args.sam3_old or args.sam3, "old model")
         g_new = grade_vs_sam3(host, args.camera, new_frames, headers, sam3,
-                              args.sam3, "new model")
+                              args.sam3_new or args.sam3, "new model")
         gt = Table(title="vs SAM 3 ground truth (vehicle boxes, IoU>=0.5)")
         gt.add_column("metric")
         gt.add_column("old model", justify="right")
