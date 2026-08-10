@@ -347,7 +347,15 @@ annotating volume. Deep docs: [docs/training-and-experiments.md](docs/training-a
   FW change); verify Model SHA256 + Tensor Size on the Fusion Analysis page.
   Watch Override Rate — OD out-voting the classifier is where our value shows.
 - Real-garage validation (L1-EL-S15, lite1-int8): spot car 98-99%, far row
-  detected at 27-96%, CUSUM_CONFIDENT. Desk/bench scenes are OUT-OF-DOMAIN
+  detected at 27-96%, CUSUM_CONFIDENT.
+- **Field A/B (Switch test sensor, 2026-08-10, od_history_compare.py +
+  SAM3 grading)**: lite1-3x vs ladder lite1 on the live sensor archive —
+  precision 0.70→0.89 / recall 0.37→0.51 (@0.25); 0.77→0.94 / 0.26→0.41
+  (@0.40); confidence p50 0.54→0.95. First field confirmation that
+  frozen-val gains transfer. Caveat: new window was 4 daytime hours vs 66
+  mixed; rerun matched-window before quoting externally. The tool
+  (od_history_compare.py --sam3 N, CF Access RAM-only) is the pilot-phase
+  measurement instrument. Desk/bench scenes are OUT-OF-DOMAIN
   for pure-garage models (hallucinated furniture-cars are expected there) —
   bench measures latency, frozen val + garages measure accuracy.
 
