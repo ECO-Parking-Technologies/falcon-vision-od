@@ -43,7 +43,11 @@ def cached_json(url, cache_file, headers, complete, timeout=15):
     """GET with a permanent per-hour cache. Only COMPLETE past hours are
     written (an in-progress hour would freeze a partial listing)."""
     if cache_file.exists():
-        return json.loads(cache_file.read_text())
+        try:
+            return json.loads(cache_file.read_text())
+        except Exception:
+            # truncated write (power loss mid-cache) — discard and refetch
+            cache_file.unlink()
     payload = None
     for attempt in (1, 2):   # one retry: rides out transient gw/tunnel blips
         try:
