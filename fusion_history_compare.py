@@ -56,6 +56,7 @@ def fetch_fusion(host, space_id, start, end, headers):
     base = CACHE / host_slug(host) / f"space-{space_id}"
     recs = []
     t = start.replace(minute=0, second=0, microsecond=0)
+    hours = 0
     while t < end:
         url = (f"{host}/archive/fusion-status/data/{space_id}/"
                f"{t.year}/{t.month}/{t.day}/{t.hour}")
@@ -63,6 +64,10 @@ def fetch_fusion(host, space_id, start, end, headers):
         data = cached_json(url, cf, headers, hour_complete(t)).get("data", [])
         recs += data
         t += timedelta(hours=1)
+        hours += 1
+        if hours % 24 == 0:
+            console.print(f"[dim]  …space {space_id}: {hours} hours fetched, "
+                          f"{len(recs)} records[/dim]")
     for r in recs:
         ts = r.get("timestamp") or r.get("ts") or 0
         r["_ts"] = ts * 1000 if ts and ts < 1e12 else ts  # normalize to ms
