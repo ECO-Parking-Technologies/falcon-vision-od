@@ -403,6 +403,13 @@ time, judged by eval_inspot.py; commit recipe changes ONLY on measured wins.
 Annotation is ON HOLD (CVAT recreated with attribute-prefilled drafts; gold
 auditing = just-in-time before any fleet-wide push).**
 
+- **lite0 combo REJECTED (2026-08-11)**: lite0-a20-3x-fill0 scored 62.8/82.7
+  in-spot vs ladder lite0's 63.8/84.6 — the combo recipe does NOT transfer
+  to the small tier (capacity: more small-anchor targets than a 320-input
+  4M model can chase). Fallback tier stays LADDER lite0. Lesson for the
+  combo-default retrain: recipe is per-tier, not universal; attribute with
+  single-lever lite0 arms before folding anything into lite0's default.
+
 **Rollout ladder (user plan 2026-08-10)**: Mon night 3x on 3 Switch sensors
 (field A/B vs SAM3, od_history_compare) → Tue: composed lite1-a20-3x-fill0
 (69.8/90.9, car 56.8, person 4.3 — best lite1) on all three → Wed: split
