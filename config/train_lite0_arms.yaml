@@ -1,0 +1,30 @@
+# lite0 single-lever attribution arms — which combo lever fails at low
+# capacity? (The full combo lost: 62.8/82.7 vs ladder lite0's 63.8/84.6.)
+# Each arm = ONE lever vs ladder lite0. Gate: 63.8 strict / 84.6 AP50,
+# all-boxes car 47.6, person 2.1.
+levels:
+  - {name: lite0-a20,   model: lite0, anchor_scale: 2.0}
+  - {name: lite0-3x,    model: lite0, train_steps_budget: 75000}
+  - {name: lite0-fill0, model: lite0, extra_args: "--workers 4 --fill-color 0"}
+
+base_data_path: data/images
+annotated_files: auto
+split_by: sensor-hash
+split_salt: falcon-v1          # never change
+train_val_split: 0.8
+val_max_images: 5000
+seed: 42
+
+include_coco: false
+label_source: sam3-drafts-lite0-arms
+
+output_dir: runs
+pretrained: True
+pretrained_backbone: True
+batch_size: 8
+epochs: auto
+train_steps_budget: 25000
+min_epochs: 2
+amp: true
+extra_args: "--workers 4"
+export_after_training: false   # attribution only — nothing ships from these
