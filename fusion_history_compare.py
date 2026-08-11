@@ -82,9 +82,14 @@ def main():
                     help="sensor calibration json (zone/enum response)")
     ap.add_argument("--od-log", type=Path, required=True,
                     help="od_history_compare run log (SAM3 truth + windows)")
-    ap.add_argument("--tolerance", type=float, default=300,
+    ap.add_argument("--tolerance", type=float, default=5,
                     help="max seconds between a graded frame and a fusion "
-                         "record for them to be paired")
+                         "record to count as the SAME moment (one OD pass). "
+                         "Unmatched samples are DROPPED and counted, never "
+                         "paired loosely — occupancy can change in minutes, "
+                         "so loose pairing manufactures false mismatches. "
+                         "(0 is meaningless: the two archives stamp separate "
+                         "clocks and never match exactly.)")
     ap.add_argument("--cf-access", action="store_true")
     args = ap.parse_args()
 
@@ -126,6 +131,7 @@ def main():
         fusion = {sid: fetch_fusion(host, sid, w0, w1, headers)
                   for sid, _, _ in spots}
         n_rec = sum(len(v) for v in fusion.values())
+        n_dropped = 0
         console.print(f"[dim]{side}: {n_rec} fusion records across "
                       f"{len(spots)} spots[/dim]")
 
@@ -143,6 +149,7 @@ def main():
                     continue
                 best = min(frecs, key=lambda r: abs(r["_ts"] - rec["ts"]))
                 if abs(best["_ts"] - rec["ts"]) > args.tolerance * 1000:
+                    n_dropped += 1
                     continue
                 truth = any(box_in_spot(b, poly) for b in gt_boxes)
                 ch = {"inference": state_to_bool(best.get("inferenceState")),
@@ -171,6 +178,9 @@ def main():
                         elif ch["fusion"] == ch["inference"]:
                             dis["fusion_sided_inf"] += 1
 
+        if n_dropped:
+            console.print(f"[dim]{side}: {n_dropped} spot-samples dropped "
+                          f"(no fusion record within {args.tolerance:.0f}s)[/dim]")
         t = Table(title=f"{side} window — channel accuracy vs SAM3 "
                         f"(per spot-sample)")
         t.add_column("channel")
