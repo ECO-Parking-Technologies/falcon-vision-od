@@ -403,12 +403,16 @@ time, judged by eval_inspot.py; commit recipe changes ONLY on measured wins.
 Annotation is ON HOLD (CVAT recreated with attribute-prefilled drafts; gold
 auditing = just-in-time before any fleet-wide push).**
 
-- **lite0 combo REJECTED (2026-08-11)**: lite0-a20-3x-fill0 scored 62.8/82.7
-  in-spot vs ladder lite0's 63.8/84.6 — the combo recipe does NOT transfer
-  to the small tier (capacity: more small-anchor targets than a 320-input
-  4M model can chase). Fallback tier stays LADDER lite0. Lesson for the
-  combo-default retrain: recipe is per-tier, not universal; attribute with
-  single-lever lite0 arms before folding anything into lite0's default.
+- **lite0 full 2^3 lever lattice (2026-08-12) — WINNER lite0-a20-3x
+  65.5/87.7** (+1.7/+3.1 over ladder lite0's 63.8/84.6; packaged with
+  --anchor-scale 2.0). All cells: a20 64.5/87.1 · 3x 64.9/85.2 · fill0
+  63.9/84.6 · a20+3x 65.5/87.7 · a20+fill0 **61.5/80.9** · 3x+fill0
+  64.7/85.2 · triple 62.8/82.7. The triple's failure = **a20×fill0
+  interaction** (each fine alone; toxic together at 320 — dense small
+  anchors over a 25%-black pad?). Per-tier recipes are now empirical:
+  **lite1 = a20+3x+fill0, lite0 = a20+3x (NO fill0)**. Eval pads gray
+  (fill0-trained models carry a small eval mismatch; fill0-alone ≈ wash so
+  the interaction is real, not artifact).
 
 **Rollout ladder (user plan 2026-08-10)**: Mon night 3x on 3 Switch sensors
 (field A/B vs SAM3, od_history_compare) → Tue: composed lite1-a20-3x-fill0
