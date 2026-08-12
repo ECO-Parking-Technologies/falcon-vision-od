@@ -135,7 +135,23 @@ annotating volume. Deep docs: [docs/training-and-experiments.md](docs/training-a
   NESTED prefixes. `val_max_images: 5000`. Shared-split placement falls back
   to level-local when an existing session split's params.json mismatches
   (never clobbers).
-- **Model-config overrides are config keys**: `anchor_scale`, `fpn_name`
+- **Per-tier deployment recipes (empirical, 2026-08-12)** — recipes are
+  per-tier, NEVER copied across tiers untested:
+  - **lite1 = a20 + 3x + fill0** (`anchor_scale: 2.0`,
+    `train_steps_budget: 75000`, `--fill-color 0`) → 69.8/90.9 in-spot,
+    car 56.8, person 4.3. Each lever won/tied its weekend single-arm run;
+    the composed run beat both single-arm fronts. fill0 is free at 384 and
+    matches the FW's black letterbox.
+  - **lite0 = a20 + 3x, NO fill0** → 65.5/87.7 in-spot. Chosen by the full
+    2^3 lattice (all 8 cells measured): a20 and 3x compose additively, but
+    **a20×fill0 is toxic at 320** (a20+fill0 61.5/80.9, and it sank the
+    triple to 62.8/82.7). Hypothesis: at 320 the pad is ~25% of the tensor
+    and dense scale-2.0 anchors over hard black make junk targets a 4M
+    model can't absorb. fill0's FW-match benefit is forfeited at this tier
+    — field A/Bs show gray-trained models perform fine on the black-pad FW.
+  - Upper tiers (lite2+, d-series): no lever validation yet — derive
+    anchor_scale from the per-input-size anchor-fit analysis and validate
+    per tier before folding into any retrain.
   (e.g. bifpn_sum) plumb through train.py → args.yaml → run_metrics →
   validate.py so post-run scoring always rebuilds with the training config.
   Auto-export REFUSES override-trained checkpoints until the packagers take
