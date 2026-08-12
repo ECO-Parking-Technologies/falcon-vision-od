@@ -1,0 +1,50 @@
+# V2 LADDER — full retrain, per-tier recipes (NEW BASELINES: everything
+# trained here supersedes the 20260803 ladder; old comparisons reset).
+#
+# Recipe sources:
+#   lite0: a20+3x, NO fill0  — full 2^3 lattice winner (a20xfill0 toxic @320)
+#   lite1: a20+3x+fill0      — weekend arms + composed confirm + field A/B
+#   lite2: lite1 recipe extrapolated (448 is the same anchor regime as 384;
+#          14.5% of in-spot cars unmatchable at default anchors)
+#   lite3+: reference tiers (FVS2-era) — 25k budget; anchor per the
+#          input-size analysis (lever value decays with input: unmatchable
+#          @3.0 = 10.8% @512, 5.4% @640, 2.5% @768); fill0 unverified
+#          above 448 so only where the lite1 evidence plausibly extends.
+# Schedule: 75k for deployment tiers, 25k for reference tiers. Cooldown-10
+# KEPT (every recipe was measured with it; zeroing it would invalidate them).
+levels:
+  - {name: lite0, model: lite0, anchor_scale: 2.0, train_steps_budget: 75000}
+  - {name: lite1, model: lite1, anchor_scale: 2.0, train_steps_budget: 75000,
+     extra_args: "--workers 4 --fill-color 0"}
+  - {name: lite2, model: lite2, anchor_scale: 2.0, train_steps_budget: 75000,
+     extra_args: "--workers 4 --fill-color 0"}
+  - {name: lite3, model: lite3, anchor_scale: 2.0,
+     extra_args: "--workers 4 --fill-color 0"}
+  - {name: lite4, model: lite4, anchor_scale: 2.5,
+     extra_args: "--workers 4 --fill-color 0"}
+  - {name: d1,    model: d1,    anchor_scale: 2.5,
+     extra_args: "--workers 4 --fill-color 0"}
+  - {name: d2,    model: d2}    # 768: default anchors fine (2.5% unmatchable)
+batch_size_overrides: {lite4: 6, d1: 6, d2: 4}
+
+base_data_path: data/images
+annotated_files: auto
+split_by: sensor-hash
+split_salt: falcon-v1          # never change
+train_val_split: 0.8
+val_max_images: 5000
+seed: 42
+
+include_coco: false
+label_source: sam3-drafts-v2-ladder
+
+output_dir: runs
+pretrained: True
+pretrained_backbone: True
+batch_size: 8
+epochs: auto
+train_steps_budget: 25000      # reference tiers; deployment tiers override
+min_epochs: 2
+amp: true
+extra_args: "--workers 4"
+export_after_training: true    # full artifact sets, correct anchors plumbed
