@@ -229,7 +229,16 @@ annotating volume. Deep docs: [docs/training-and-experiments.md](docs/training-a
   +0.4 only. But pure-garage models hallucinate on out-of-domain scenes
   (desk test: 91% "cars" on furniture) — catastrophic forgetting of world
   knowledge; COCO replay remains the fix if that ever matters in prod.
-- **Capacity ladder (94,628 train imgs each) — COMPLETE 2026-08-06**:
+- **V2 LADDER (2026-08-14, session 20260812-121457) — per-tier recipes,
+  NEW BASELINES (v1 ladder retired)**. In-spot strict/AP50 · all-boxes car ·
+  person: lite0 65.4/87.7·50.5·2.1 — lite1 69.7/90.6·56.5·4.0 — lite2
+  72.7/92.4·60.3·7.3 — lite3 74.0/92.9·62.1·8.2 — **lite4 77.6/94.8·67.6·
+  10.3** — d1 75.3/93.3·64.0·7.2 — d2 NaN'd (bs4+amp fp16, retraining
+  amp-off). Recipes REPRODUCE (lite0/lite1 within 0.3 of discovery runs).
+  **The v1 "~62.5 ceiling" was largely an ANCHOR artifact, not capacity:
+  lite4 with anchors 2.5+fill0 beats d1 — FVS2 pick reopened (lite4 vs
+  d-series-with-tuned-anchors TBD).** Person gate (3.8) clears from lite1 up.
+- **v1 capacity ladder (RETIRED 2026-08-14; kept for history)**:
   lite0 47.6 · lite1 53.9 · lite2 59.3 · lite3 60.0 · lite4 60.8 · d1 62.7 ·
   d2 62.5. Person %: 2.1 / 3.2 / 5.4 / 5.3 / 7.3 / 6.1 / 2.2 (d2's person
   collapse = schedule artifact: bs4 → 2 real epochs). **Car accuracy

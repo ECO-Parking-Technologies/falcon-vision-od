@@ -24,7 +24,9 @@ levels:
      extra_args: "--workers 4 --fill-color 0"}
   - {name: d1,    model: d1,    anchor_scale: 2.5,
      extra_args: "--workers 4 --fill-color 0"}
-  - {name: d2,    model: d2}    # 768: default anchors fine (2.5% unmatchable)
+  - {name: d2,    model: d2, amp: false}
+    # 768: default anchors fine (2.5% unmatchable). amp OFF: fp16 diverged
+    # to NaN at epoch 3 on the first v2 attempt (bs4 + 768 overflow)
 batch_size_overrides: {lite4: 6, d1: 6, d2: 4}
 
 base_data_path: data/images
