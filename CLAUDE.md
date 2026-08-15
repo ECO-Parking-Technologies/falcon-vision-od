@@ -238,6 +238,12 @@ annotating volume. Deep docs: [docs/training-and-experiments.md](docs/training-a
   **The v1 "~62.5 ceiling" was largely an ANCHOR artifact, not capacity:
   lite4 with anchors 2.5+fill0 beats d1 — FVS2 pick reopened (lite4 vs
   d-series-with-tuned-anchors TBD).** Person gate (3.8) clears from lite1 up.
+  d2 (attempt 3, lr 0.004 + clip-grad 10, fp32): 73.6/91.5, car 62.0,
+  person 0.7 — stable but last among big tiers. **d-series DROPPED from the
+  default ladder (user 2026-08-15): resolution-starved on 640x480 sources,
+  never beats lite4. Revive (commented in train_v2_ladder.yaml) for FVS2
+  4K / Jetson tiled-4K on native-res data — retraining them today buys
+  nothing durable. lite4 = top model and provisional FVS2 pick.**
 - **v1 capacity ladder (RETIRED 2026-08-14; kept for history)**:
   lite0 47.6 · lite1 53.9 · lite2 59.3 · lite3 60.0 · lite4 60.8 · d1 62.7 ·
   d2 62.5. Person %: 2.1 / 3.2 / 5.4 / 5.3 / 7.3 / 6.1 / 2.2 (d2's person

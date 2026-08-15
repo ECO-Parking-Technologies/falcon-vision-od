@@ -22,13 +22,16 @@ levels:
      extra_args: "--workers 4 --fill-color 0"}
   - {name: lite4, model: lite4, anchor_scale: 2.5,
      extra_args: "--workers 4 --fill-color 0"}
-  - {name: d1,    model: d1,    anchor_scale: 2.5,
-     extra_args: "--workers 4 --fill-color 0"}
-  - {name: d2,    model: d2, amp: false,
-     extra_args: "--workers 4 --lr 0.004 --clip-grad 10"}
-    # 768: default anchors fine (2.5% unmatchable). d2 @ bs4 is UNSTABLE at
-    # the default lr 0.01: NaN'd at ep3 (amp) AND ep4 (fp32). lr 0.004 +
-    # grad clipping; v1 d2's person collapse was likely this same disease.
+  # d-series DROPPED from the default ladder (user decision 2026-08-15):
+  # on 640x480 sources they never beat lite4 (v2: lite4 77.6 > d1 75.3 >
+  # d2 73.6 in-spot) and d2 is unstable at bs4 (NaN at default lr in both
+  # amp and fp32; needs lr 0.004 + --clip-grad 10). The ARCHITECTURE isn't
+  # dead - it's resolution-starved: revive for FVS2 4K / Jetson lot-product
+  # tiled-4K training on native-res data. Uncomment to train on demand:
+  #  - {name: d1,    model: d1,    anchor_scale: 2.5,
+  #     extra_args: "--workers 4 --fill-color 0"}
+  #  - {name: d2,    model: d2, amp: false,
+  #     extra_args: "--workers 4 --lr 0.004 --clip-grad 10"}
 batch_size_overrides: {lite4: 6, d1: 6, d2: 4}
 
 base_data_path: data/images
