@@ -379,6 +379,42 @@ annotating volume. Deep docs: [docs/training-and-experiments.md](docs/training-a
   Watch Override Rate — OD out-voting the classifier is where our value shows.
 - Real-garage validation (L1-EL-S15, lite1-int8): spot car 98-99%, far row
   detected at 27-96%, CUSUM_CONFIDENT.
+- **Store-wide occupancy eval (eval_occupancy_tiers.py, 2026-08-17)**: all 5
+  tiers over the FULL val side (22.6k frames, 33 garages), per-spot
+  occupied/empty vs SAM3 stamps: lite0 96.7 · lite1 97.1 · lite2 97.5 ·
+  lite3 97.6 · lite4 97.8 (FN-rate 5.2→2.3%). **AP spread compresses to
+  ~1pt in occupancy terms.** Per-garage CSV:
+  data/occupancy_eval_per_garage.csv — hard garages (Switch, Tarkington,
+  Carmel Civic, Fontainebleau 91-95%) want lite1→lite4-on-NPU; ~17 garages
+  lite0≈lite1 (Yaamava 99.2 on lite0). This machinery pointed at portal
+  validations = the beta-gate business metric (not built).
+- **Temporal voting REJECTED (2026-08-17)**: majority-vote over N OD passes
+  makes occupancy WORSE (96.6→94.8 @9-vote) — new models don't flicker
+  (field conf p50 0.95); residual errors are PERSISTENT (same spot missed
+  every pass), voting only adds transition lag. FW CUSUM is already the
+  smart version. 99% solo needs resolution/NPU, not smoothing.
+- **Fusion channel analysis (fusion_history_compare.py, 2026-08-11, 680
+  images/2694 spot-samples, strict <=5s pairing)**: easy views — all
+  channels ~98%, fusion arbitrates correctly. Glare view — OD 88% >> fused
+  70-78% >> classifier 62-75%: when channels disagree OD is right 84% but
+  fusion sides with it only 58% (SHADOW_HOLD 104/248, BACKGROUND_VETO 41).
+  Dark view — ALL channels equal-low ~76-80%, errors false-occupied; 61% of
+  those had NO current OD detection (stale per-spot STATE, tracker holds).
+  **Fusion errors fleet-wide are 99% false-occupied. Fix is FW config:
+  sustained-OD verdicts should outrank holds/vetoes + faster state release
+  — worth 10-18pts on hard views, no model changes.** Greg's gateway
+  parking-guidance config page exposes every needed knob (FusionStrong
+  Confidence, background filter+IoU, MapObscuredToLastState, MissedFrames,
+  spot-overlap family, per-config model file) — per-sensor tuning = named
+  config profiles, post-recalibration grunt work (user).
+- **Class characterization (2026-08-17, val side)**: motorcycles (850 drafts
+  store-wide, 0 bicycles ANYWHERE): lite1 finds 59% but classifies 0 as
+  moto (lite4 70%/7) — cosmetic, FW maps both to VEHICLE. Persons by size:
+  lite1 finds 52% of large (>60px, safety band)/22% med/4% small; ~8%
+  boxed as VEHICLE (the false-occupancy polarity); lite4 63/41/16. Fixes if
+  ever required: capacity/NPU > lite1-coco rerun (a20 halved person anchor
+  mismatch) > class-balanced sampling. Galleries:
+  data/draft_previews/{model_compare,moto_examples,person_examples}/.
 - **Field A/B (Switch test sensor, 2026-08-10, od_history_compare.py +
   SAM3 grading)**: lite1-3x vs ladder lite1 on the live sensor archive —
   precision 0.70→0.89 / recall 0.37→0.51 (@0.25); 0.77→0.94 / 0.26→0.41
@@ -386,7 +422,16 @@ annotating volume. Deep docs: [docs/training-and-experiments.md](docs/training-a
   frozen-val gains transfer. Caveat: new window was 4 daytime hours vs 66
   mixed; rerun matched-window before quoting externally. The tool
   (od_history_compare.py --sam3 N, CF Access RAM-only) is the pilot-phase
-  measurement instrument. Desk/bench scenes are OUT-OF-DOMAIN
+  measurement instrument. Its cache (data/sensor_archive/<host>/: hourly
+  detection JSONs, --mirror'd images, calibration.json, per-run logs with
+  frame-level SAM3 verdicts) is PERMANENT (sensors truncate after days) and
+  in the backup set; strict <=10s image↔detections pairing, drops never
+  approximates. fleet_pull.py scales it to whole floors: auto model-detect
+  via /plugin/od-model/info (sha vs KNOWN_SHAS), calibrations for all,
+  stratified graded subset, both cameras (Tarkington L2 roster:
+  data/sensor_archive/tarkington-l2-roster.json, 40 sensors).
+  v2 artifact set (models+README+per-garage csv) published to SharePoint
+  2026-08-17. Desk/bench scenes are OUT-OF-DOMAIN
   for pure-garage models (hallucinated furniture-cars are expected there) —
   bench measures latency, frozen val + garages measure accuracy.
 
