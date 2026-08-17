@@ -429,6 +429,14 @@ OD confirms parked cars — seconds don't matter, points do).
 
 ## 14. Roadmap / open threads
 
+**PROJECT STATE (user, 2026-08-17): OD model R&D is CLOSED for the CM3
+generation — at the hardware limit (~97-98% occupancy solo; 99% needs
+NPU/resolution). Now in data-gathering/validation mode: field A/Bs
+accumulate, garage-wide split runs, fusion+config tuning is post-
+recalibration grunt work. OD complements the classifier via fusion — it
+does not replace it. Model work reopens on: FVS2/NPU hardware, 4K sources
+(revive d-series), Jetson lot product, or a person-detection requirement.**
+
 **Round-2 protocol (user): improve the deployment target, one lever at a
 time, judged by eval_inspot.py; commit recipe changes ONLY on measured wins.
 Annotation is ON HOLD (CVAT recreated with attribute-prefilled drafts; gold
