@@ -498,6 +498,17 @@ auditing = just-in-time before any fleet-wide push).**
   (fill0-trained models carry a small eval mismatch; fill0-alone ≈ wash so
   the interaction is real, not artifact).
 
+**RELEASE CANDIDATE APPROVED (user, 2026-08-17)**: Tarkington L2 40-sensor
+split weekend verdict (graded subset, phantom spot excluded): **lite1-combo
+100.00% (102 TP / 0 FP / 0 FN / 741 spot-obs) · lite0-a20-3x 99.46%
+(3 FN / 1 FP)** — ~7x fewer errors than the pre-install models. v2 session
+20260812-121457 lite0+lite1 int8 dropins (shas d15d7906… / b1588e9d…) are
+being bundled as a SNAP UPDATE staged to ALL garages = first fleet OD
+release candidate. Activation per garage via parking-guidance configs
+(per-garage CSV is the assignment map). B024 phantom = human-confirmed
+SAM3 MISS (sensor was right; first verified teacher error — gold-audit
+exhibit A).
+
 **Rollout ladder (user plan 2026-08-10)**: Mon night 3x on 3 Switch sensors
 (field A/B vs SAM3, od_history_compare) → Tue: composed lite1-a20-3x-fill0
 (69.8/90.9, car 56.8, person 4.3 — best lite1) on all three → Wed: split
