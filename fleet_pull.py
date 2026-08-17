@@ -54,23 +54,35 @@ def get_model_sha(base, headers):
     return None
 
 
-def get_calibration(base, headers, camera):
-    try:
-        r = requests.post(f"{base}/plugin/calibration/zone/enum",
-                          data={"cameraId": camera}, headers=headers, timeout=12)
-        d = r.json()
-        if d.get("response", {}).get("data", {}).get("zones") is not None:
-            return d
-    except Exception:
-        pass
-    return None
+def get_calibration(base, headers, cameras):
+    """Merge zone lists across cameras into one calibration doc (zones carry
+    their own cameraId, so downstream per-camera filtering still works)."""
+    zones = []
+    ok = False
+    for cam in cameras:
+        try:
+            r = requests.post(f"{base}/plugin/calibration/zone/enum",
+                              data={"cameraId": cam}, headers=headers, timeout=12)
+            d = r.json()
+            z = d.get("response", {}).get("data", {}).get("zones")
+            if z is not None:
+                ok = True
+                zones += z
+        except Exception:
+            pass
+    if not ok:
+        return None
+    return {"response": {"retval": {"status": "OK"},
+                         "data": {"zones": zones}}}
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--roster", type=Path, required=True)
     ap.add_argument("--domain", required=True, help="e.g. fvg-tarkington")
-    ap.add_argument("--camera", type=int, default=1)
+    ap.add_argument("--cameras", default="1,2",
+                    help="camera ids to cover (default both; cameras with "
+                         "no spot zones are skipped automatically)")
     ap.add_argument("--cutoff", required=True, help="install time, ISO w/ offset")
     ap.add_argument("--new-start", required=True, help="cutoff + buffer, ISO")
     ap.add_argument("--before-hours", type=int, default=48)
@@ -79,6 +91,7 @@ def main():
     ap.add_argument("--sam3", type=int, default=40, help="frames graded per window")
     args = ap.parse_args()
 
+    cameras = [int(c) for c in args.cameras.split(",") if c.strip()]
     headers = {
         "CF-Access-Client-Id":
             Prompt.ask("[cyan]CF-Access-Client-Id[/cyan]", console=console).strip(),
@@ -96,16 +109,18 @@ def main():
         sha = get_model_sha(base, headers)
         s["sha"] = sha
         s["model"] = KNOWN_SHAS.get(sha, "UNKNOWN" if sha else "UNREACHABLE")
-        cal = get_calibration(base, headers, args.camera)
+        cal = get_calibration(base, headers, cameras)
         if cal is not None:
             d = CACHE / s["host"]
             d.mkdir(parents=True, exist_ok=True)
             (d / "calibration.json").write_text(json.dumps(cal))
         s["calibration"] = cal is not None
-        n_spots = (len([z for z in cal["response"]["data"]["zones"]
-                        if z.get("zoneType") == "s"]) if cal else 0)
+        per_cam = {c: len([z for z in cal["response"]["data"]["zones"]
+                           if z.get("zoneType") == "s" and z.get("cameraId") == c])
+                   for c in cameras} if cal else {}
+        s["spots_per_camera"] = per_cam
         console.print(f"  {s['host']} {s['name']:10s} -> {s['model']:20s} "
-                      f"cal={'ok' if s['calibration'] else 'FAIL'} spots={n_spots}")
+                      f"cal={'ok' if s['calibration'] else 'FAIL'} spots={per_cam}")
     split_file = args.roster.with_name(args.roster.stem.replace("-roster", "")
                                        + "-split.json")
     split_file.write_text(json.dumps(roster, indent=1))
@@ -141,42 +156,47 @@ def main():
     results = []
     for s in subset:
         base = sensor_url(s["host"], args.domain)
-        console.print(f"[bold]{s['host']} {s['name']} ({s['model']})[/bold]")
-        old_f, _ = fetch_window(base, args.camera, b0, cutoff, headers)
-        new_f, _ = fetch_window(base, args.camera, a0, now, headers)
-        mirror_images(base, args.camera, b0, now, headers)
-        g_old, rec_old = grade_vs_sam3(base, args.camera, old_f, headers, sam3,
-                                       args.sam3, "old")
-        g_new, rec_new = grade_vs_sam3(base, args.camera, new_f, headers, sam3,
-                                       args.sam3, "new")
-        run_dir = CACHE / s["host"] / "runs"
-        run_dir.mkdir(parents=True, exist_ok=True)
-        log = run_dir / (datetime.now().strftime("%Y%m%d-%H%M%S")
-                         + f"-fleet-cam{args.camera}.json")
-        log.write_text(json.dumps({
-            "meta": {"host": base, "camera": args.camera, "name": s["name"],
-                     "lane": s["lane"], "model": s["model"], "sha": s["sha"],
-                     "old_window": [b0.isoformat(), cutoff.isoformat()],
-                     "new_window": [a0.isoformat(), now.isoformat()],
-                     "ran": datetime.now(timezone.utc).isoformat()},
-            "summary": {"old": window_stats(old_f), "new": window_stats(new_f)},
-            "sam3_stats": {"old": g_old, "new": g_new},
-            "graded_frames": {"old": rec_old, "new": rec_new},
-        }, indent=1))
-        row = {"host": s["host"], "name": s["name"], "lane": s["lane"],
-               "model": s["model"]}
-        for side, g in (("old", g_old), ("new", g_new)):
-            if g:
-                d = g[0.40]
-                row[side] = (round(d["tp"] / d["det"], 2) if d["det"] else None,
-                             round(d["tp"] / d["gt"], 2) if d["gt"] else None)
-                if side == "new":
-                    agg = pooled.setdefault(s["model"], {"tp": 0, "det": 0, "gt": 0})
-                    for k in agg:
-                        agg[k] += d[k]
-            else:
-                row[side] = (None, None)
-        results.append(row)
+        for cam in cameras:
+            if not s.get("spots_per_camera", {}).get(cam):
+                continue   # no monitored spots on this camera
+            console.print(f"[bold]{s['host']} {s['name']} cam{cam} "
+                          f"({s['model']})[/bold]")
+            old_f, _ = fetch_window(base, cam, b0, cutoff, headers)
+            new_f, _ = fetch_window(base, cam, a0, now, headers)
+            mirror_images(base, cam, b0, now, headers)
+            g_old, rec_old = grade_vs_sam3(base, cam, old_f, headers, sam3,
+                                           args.sam3, "old")
+            g_new, rec_new = grade_vs_sam3(base, cam, new_f, headers, sam3,
+                                           args.sam3, "new")
+            run_dir = CACHE / s["host"] / "runs"
+            run_dir.mkdir(parents=True, exist_ok=True)
+            log = run_dir / (datetime.now().strftime("%Y%m%d-%H%M%S")
+                             + f"-fleet-cam{cam}.json")
+            log.write_text(json.dumps({
+                "meta": {"host": base, "camera": cam, "name": s["name"],
+                         "lane": s["lane"], "model": s["model"], "sha": s["sha"],
+                         "old_window": [b0.isoformat(), cutoff.isoformat()],
+                         "new_window": [a0.isoformat(), now.isoformat()],
+                         "ran": datetime.now(timezone.utc).isoformat()},
+                "summary": {"old": window_stats(old_f), "new": window_stats(new_f)},
+                "sam3_stats": {"old": g_old, "new": g_new},
+                "graded_frames": {"old": rec_old, "new": rec_new},
+            }, indent=1))
+            row = {"host": s["host"], "name": f"{s['name']} cam{cam}",
+                   "lane": s["lane"], "model": s["model"]}
+            for side, g in (("old", g_old), ("new", g_new)):
+                if g:
+                    d = g[0.40]
+                    row[side] = (round(d["tp"] / d["det"], 2) if d["det"] else None,
+                                 round(d["tp"] / d["gt"], 2) if d["gt"] else None)
+                    if side == "new":
+                        agg = pooled.setdefault(s["model"],
+                                                {"tp": 0, "det": 0, "gt": 0})
+                        for k in agg:
+                            agg[k] += d[k]
+                else:
+                    row[side] = (None, None)
+            results.append(row)
 
     t = Table(title="fleet A/B — per sensor (P, R @0.40 vs SAM3)")
     for c in ("sensor", "lane", "model", "old P/R", "new P/R"):
