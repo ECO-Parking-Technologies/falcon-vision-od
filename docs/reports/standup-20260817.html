@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Falcon Vision OD — Training Progress (Aug 17, 2026)</title>
+<style>
+  :root {
+    --surface: #fcfcfb; --ink: #0b0b0b; --ink2: #52514e; --line: #e4e3df;
+    --b1: #86b6ef; --b2: #5598e7; --b3: #2a78d6; --b4: #1c5cab;
+    --good: #008300; --card: #f4f3f0;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --surface: #1a1a19; --ink: #ffffff; --ink2: #c3c2b7; --line: #383835;
+      --b1: #6da7ec; --b2: #3987e5; --b3: #256abf; --b4: #86b6ef;
+      --good: #35c06f; --card: #242423;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 32px 24px; background: var(--surface); color: var(--ink);
+         font: 15px/1.5 -apple-system, "Segoe UI", Roboto, sans-serif; max-width: 880px;
+         margin-inline: auto; }
+  h1 { font-size: 24px; margin: 0 0 2px; }
+  h2 { font-size: 17px; margin: 34px 0 10px; }
+  .sub { color: var(--ink2); margin-bottom: 26px; }
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
+  .tile { background: var(--card); border-radius: 10px; padding: 14px 16px; }
+  .tile b { display: block; font-size: 26px; }
+  .tile span { color: var(--ink2); font-size: 13px; }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  th { text-align: left; color: var(--ink2); font-weight: 600; border-bottom: 1px solid var(--line); padding: 6px 8px; }
+  td { padding: 6px 8px; border-bottom: 1px solid var(--line); }
+  .num { text-align: right; font-variant-numeric: tabular-nums; }
+  .up { color: var(--good); font-weight: 600; }
+  .bars { margin: 14px 0 4px; }
+  .brow { display: grid; grid-template-columns: 210px 1fr 52px; align-items: center; gap: 10px; margin: 7px 0; }
+  .blabel { font-size: 13px; color: var(--ink2); text-align: right; }
+  .btrack { position: relative; height: 14px; background: transparent; }
+  .btrack::before { content:""; position: absolute; inset: 0;
+    background: repeating-linear-gradient(90deg, transparent 0 24.8%, var(--line) 24.8% 25.2%); opacity:.6; }
+  .bar { position: relative; height: 14px; border-radius: 0 4px 4px 0; transition: filter .15s; }
+  .bar:hover { filter: brightness(1.15); }
+  .bval { font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .axis { display: grid; grid-template-columns: 210px 1fr 52px; gap: 10px; color: var(--ink2); font-size: 11px; }
+  .axis div:nth-child(2) { display: flex; justify-content: space-between; }
+  .note { color: var(--ink2); font-size: 13px; }
+  .steps li { margin: 4px 0; }
+  footer { margin-top: 36px; color: var(--ink2); font-size: 12px; border-top: 1px solid var(--line); padding-top: 10px; }
+</style>
+</head>
+<body>
+
+<h1>Falcon Vision — Object Detection Training Progress</h1>
+<div class="sub">Stand-up briefing · August 17, 2026 · internal</div>
+
+<div class="tiles">
+  <div class="tile"><b>2.1&times;</b><span>car detection accuracy vs the production model, on identical evaluation</span></div>
+  <div class="tile"><b>94–99%</b><span>spot-occupancy accuracy measured live on garage sensors</span></div>
+  <div class="tile"><b>2&times; faster</b><span>fallback model option (1.4s vs ~3s) at higher accuracy than production</span></div>
+  <div class="tile"><b>3 garages</b><span>running new models now: Switch, Yaamava, Tarkington (40-sensor split)</span></div>
+</div>
+
+<h2>Accuracy journey — car detection (AP&nbsp;% on the frozen evaluation set)</h2>
+<div class="bars">
+  <div class="brow"><div class="blabel">production model (years in fleet)</div>
+    <div class="btrack"><div class="bar" style="width:26.7%;background:var(--b1)" title="Off-the-shelf EfficientDet-Lite2 · car AP 26.7%"></div></div>
+    <div class="bval">26.7</div></div>
+  <div class="brow"><div class="blabel">first custom model (July)</div>
+    <div class="btrack"><div class="bar" style="width:53.9%;background:var(--b2)" title="Domain-trained lite1, v1 ladder · car AP 53.9%"></div></div>
+    <div class="bval">53.9</div></div>
+  <div class="brow"><div class="blabel">tuned recipe — deployed now</div>
+    <div class="btrack"><div class="bar" style="width:56.8%;background:var(--b3)" title="lite1 with per-tier recipe (anchors + schedule + fw-matched padding) · car AP 56.8%"></div></div>
+    <div class="bval">56.8</div></div>
+  <div class="brow"><div class="blabel">largest tier (future hardware)</div>
+    <div class="btrack"><div class="bar" style="width:67.6%;background:var(--b4)" title="lite4, v2 ladder · car AP 67.6% — disproved the old 'capacity ceiling'"></div></div>
+    <div class="bval">67.6</div></div>
+</div>
+<div class="axis"><div></div><div><span>0</span><span>25</span><span>50</span><span>75</span><span>100</span></div><div></div></div>
+<p class="note">Same evaluation data throughout. Remaining gap to 100 is mostly cars smaller than the models' input resolution can physically resolve.</p>
+
+<h2>What changed: measured training recipes, per model size</h2>
+<table>
+  <tr><th>Lever</th><th>Plain English</th><th class="num">Effect</th></tr>
+  <tr><td>Anchor fit</td><td>Detection grid was sized for internet photos, not garage cameras — a third of our cars couldn't be matched at all. Resized it.</td><td class="num up">largest single gain; distant-car detection +8pts</td></tr>
+  <tr><td>3&times; training schedule</td><td>Models were undertrained; tripling training time made detections decisive (confidence 0.5 → 0.95 in the field)</td><td class="num up">+0.8 on the product metric</td></tr>
+  <tr><td>Firmware-matched preprocessing</td><td>Train exactly on what the sensor feeds the model</td><td class="num up">free; correctness</td></tr>
+  <tr><td>Per-tier recipes</td><td>Full ablation showed one recipe does <i>not</i> fit all model sizes — each tier now has its own measured recipe</td><td class="num up">prevented a regression on the small model</td></tr>
+</table>
+
+<h2>Field validation — live sensors, before/after, graded by a foundation model</h2>
+<table>
+  <tr><th>Sensor (condition)</th><th class="num">Occupancy accuracy before</th><th class="num">after</th><th class="num">missed vehicles</th></tr>
+  <tr><td>Busy view</td><td class="num">94.8%</td><td class="num up">98.6%</td><td class="num">22 → <b>1</b></td></tr>
+  <tr><td>Heavy glare</td><td class="num">94.7%</td><td class="num up">98.4%</td><td class="num">17 → <b>4</b></td></tr>
+  <tr><td>Dark vehicles, night</td><td class="num">88.0%</td><td class="num up">94.0%</td><td class="num">44 → <b>8</b></td></tr>
+</table>
+<p class="note">Night and glare — historically the worst conditions — are now the models' <i>best</i>. Bonus finding: on hard views the firmware's fusion logic, tuned for the old weak model, now costs more accuracy than the models do; two config-level fixes proposed (no retraining needed).</p>
+
+<h2>Current model family (v2 ladder — complete, all artifacts built)</h2>
+<table>
+  <tr><th>Tier</th><th>Role</th><th class="num">In-spot accuracy (strict / lenient)</th><th class="num">Sensor latency</th></tr>
+  <tr><td>lite0</td><td>fast fallback — deployed in split test</td><td class="num">65.4 / 87.7</td><td class="num">~1.4s</td></tr>
+  <tr><td><b>lite1</b></td><td><b>primary — deployed in split test</b></td><td class="num"><b>69.7 / 90.6</b></td><td class="num">~3.1s</td></tr>
+  <tr><td>lite2</td><td>next-gen hardware (NPU)</td><td class="num">72.7 / 92.4</td><td class="num">n/a on current CPU</td></tr>
+  <tr><td>lite3 / lite4</td><td>accuracy headroom, future hardware</td><td class="num">74.0 / 92.9 · <b>77.6 / 94.8</b></td><td class="num">—</td></tr>
+</table>
+<p class="note">The d-series (largest models) was retired from the default lineup: on current 640&times;480 cameras they never beat lite4 — they'll return when higher-resolution sources exist.</p>
+
+<h2>Rollout status</h2>
+<ul class="steps">
+  <li><b>Done:</b> 3-sensor pilot at Switch (measured wins above) → 3 sensors at Yaamava → 40-sensor lite0/lite1 split across Tarkington Level 2 (this weekend, still test mode)</li>
+  <li><b>This week:</b> harvest the weekend split results — every sensor self-archives its own before/after evidence, graded automatically against a foundation-model referee</li>
+  <li><b>Beta gates (before other customers' garages):</b> human-verified evaluation slice ("gold audit") and the spot-occupancy evaluator against portal validation data</li>
+</ul>
+
+<footer>Falcon Vision OD · training sessions through 2026-08-15 · evaluation = frozen 5k-image set, teacher-labeled; field numbers = live sensor archives graded vs SAM&nbsp;3 · internal use only</footer>
+</body>
+</html>
